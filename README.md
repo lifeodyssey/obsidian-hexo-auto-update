@@ -1,0 +1,1 @@
+# obsidian-hexo-auto-update

@@ -4,10 +4,13 @@ import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Set
 
 interface MyPluginSettings {
 	mySetting: string;
+	sourcePath: string;
 }
 
 const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
+	mySetting: 'default',
+	sourcePath: '' // Set the default source path to an empty string
+
 }
 
 export default class MyPlugin extends Plugin {
@@ -133,5 +136,18 @@ class SampleSettingTab extends PluginSettingTab {
 					this.plugin.settings.mySetting = value;
 					await this.plugin.saveSettings();
 				}));
+		// Add a new setting for the source path
+		new Setting(containerEl)
+			.setName('Source Path')
+			.setDesc('Specify the path to the Hexo source folder')
+			.addText(text => text
+				.setPlaceholder('Enter the source path')
+				.setValue(this.plugin.settings.sourcePath)
+				.onChange(async (value) => {
+					console.log('Source Path: ' + value);
+					this.plugin.settings.sourcePath = value;
+					await this.plugin.saveSettings();
+				}));
+	
 	}
 }

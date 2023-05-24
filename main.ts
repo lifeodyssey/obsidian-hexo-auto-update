@@ -1,6 +1,6 @@
 import { App, Editor, FileSystemAdapter, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
 const symlinkDir =require( 'symlink-dir'); // Import the symlinkDir function from the 'symlink-dir' package
-
+const path= require('path');
 // Remember to rename these classes and interfaces!
 
 interface MyPluginSettings {
@@ -19,11 +19,31 @@ const DEFAULT_SETTINGS: MyPluginSettings = {
 export default class MyPlugin extends Plugin {
 	settings: MyPluginSettings;
 	async simulateSymlinkImplementation(): Promise<string> {
-		return new Promise(resolve => {
-			setTimeout(() => {
-				resolve('success');
-			}, 15000);
-		});
+		try {
+			// Get the root path of the Obsidian vault
+			const vaultPath = (
+				this.app.vault.adapter as FileSystemAdapter
+			).getBasePath()
+			// Get the last part of the Hexo path
+			const hexoFolderName = this.settings.sourcePath.split('/').pop();
+
+			// Create the new folder path inside the vault root path
+			const newFolderPath = path.join(vaultPath, hexoFolderName);
+
+			// Create the symlink between the Hexo path and the new folder path
+			const result = await symlinkDir(this.settings.sourcePath, newFolderPath);
+
+			if (result.reused) {
+				console.log('Symlink already exists and has been reused:', newFolderPath);
+			} else {
+				console.log('Symlink successfully created:', newFolderPath);
+			}
+
+			return 'success';
+		} catch (error) {
+			console.error('Failed to create symlink:', error);
+			return 'failure';
+		}
 	}
 
 	async onload() {

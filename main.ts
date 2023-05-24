@@ -1,20 +1,30 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { App, Editor, FileSystemAdapter, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+const symlinkDir =require( 'symlink-dir'); // Import the symlinkDir function from the 'symlink-dir' package
 
 // Remember to rename these classes and interfaces!
 
 interface MyPluginSettings {
 	mySetting: string;
 	sourcePath: string;
+	hexoFolderPath:string
+
 }
 
 const DEFAULT_SETTINGS: MyPluginSettings = {
 	mySetting: 'default',
-	sourcePath: '' // Set the default source path to an empty string
-
+	sourcePath: '' ,// Set the default source path to an empty string,
+	hexoFolderPath:''
 }
 
 export default class MyPlugin extends Plugin {
 	settings: MyPluginSettings;
+	async simulateSymlinkImplementation(): Promise<string> {
+		return new Promise(resolve => {
+			setTimeout(() => {
+				resolve('success');
+			}, 15000);
+		});
+	}
 
 	async onload() {
 		await this.loadSettings();
@@ -100,12 +110,12 @@ class SampleModal extends Modal {
 	}
 
 	onOpen() {
-		const {contentEl} = this;
+		const { contentEl } = this;
 		contentEl.setText('Woah!');
 	}
 
 	onClose() {
-		const {contentEl} = this;
+		const { contentEl } = this;
 		contentEl.empty();
 	}
 }
@@ -119,11 +129,11 @@ class SampleSettingTab extends PluginSettingTab {
 	}
 
 	display(): void {
-		const {containerEl} = this;
+		const { containerEl } = this;
 
 		containerEl.empty();
 
-		containerEl.createEl('h2', {text: 'Settings for my awesome plugin.'});
+		containerEl.createEl('h2', { text: 'Settings for my awesome plugin.' });
 
 		new Setting(containerEl)
 			.setName('Setting #1')
@@ -137,17 +147,45 @@ class SampleSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 		// Add a new setting for the source path
-		new Setting(containerEl)
+
+		const hexoFolderSetting = new Setting(containerEl)
 			.setName('Source Path')
-			.setDesc('Specify the path to the Hexo source folder')
-			.addText(text => text
-				.setPlaceholder('Enter the source path')
-				.setValue(this.plugin.settings.sourcePath)
-				.onChange(async (value) => {
-					console.log('Source Path: ' + value);
-					this.plugin.settings.sourcePath = value;
-					await this.plugin.saveSettings();
-				}));
-	
+			.setDesc('Specify the path to the Hexo source folder');
+		const hexoFolderInput = hexoFolderSetting.addText(text => text
+			.setPlaceholder('Enter the source path')
+			.setValue(this.plugin.settings.sourcePath)
+			.onChange(async (value) => {
+				console.log('Source Path: ' + value);
+				this.plugin.settings.sourcePath = value;
+				await this.plugin.saveSettings();
+			}));
+		const addButton = hexoFolderSetting.addButton(button => button
+			.setButtonText('Add')
+			.onClick(async () => {
+				// Check if the path is not null
+				if (this.plugin.settings.sourcePath) {
+					// Make the button unclickable and change the text
+					addButton.setDisabled(true);
+
+					// Show a notice that the symlink process has started
+					const addingNotice = new Notice('Adding...');
+
+					// Call the simulateSymlinkImplementation function
+					const status = await this.plugin.simulateSymlinkImplementation();
+
+					// Clear the initial notice
+					addingNotice.hide();
+
+					// Show the returned status in a new notice
+					new Notice(status);
+
+					// Change the button text back to "Add" and re-enable it
+				} else {
+					new Notice('Please set the Hexo path in the plugin settings before creating the folder.');
+				}
+			}));
+
+
 	}
 }
+

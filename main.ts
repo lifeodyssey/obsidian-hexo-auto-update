@@ -2,30 +2,30 @@ import { App, FileSystemAdapter, Plugin, PluginSettingTab, Setting, Notice } fro
 const symlinkDir = require('symlink-dir');
 const path = require('path');
 
-interface MyPluginSettings {
-	sourcePath: string;
+interface HexoIntegrationSettings {
+	hexoSourcePath: string;
 	hexoFolderPath: string;
 }
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	sourcePath: '',
+const DEFAULT_SETTINGS: HexoIntegrationSettings = {
+	hexoSourcePath: '',
 	hexoFolderPath: '',
 };
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+export default class HexoIntegrationPlugin extends Plugin {
+	settings: HexoIntegrationSettings;
 
-	async simulateSymlinkImplementation(): Promise<string> {
+	async createHexoSymlink(): Promise<string> {
 		try {
 			const vaultPath = (
 				this.app.vault.adapter as FileSystemAdapter
 			).getBasePath()
 
-			const hexoFolderName = this.settings.sourcePath.split('/').pop();
+			const hexoFolderName = this.settings.hexoSourcePath.split('/').pop();
 
 			const newFolderPath = path.join(vaultPath, hexoFolderName);
 
-			const result = await symlinkDir(this.settings.sourcePath, newFolderPath);
+			const result = await symlinkDir(this.settings.hexoSourcePath, newFolderPath);
 
 			if (result.reused) {
 				console.log('Symlink already exists and has been reused:', newFolderPath);
@@ -43,7 +43,7 @@ export default class MyPlugin extends Plugin {
 	async onload() {
 		await this.loadSettings();
 
-		this.addSettingTab(new SampleSettingTab(this.app, this));
+		this.addSettingTab(new HexoIntegrationSettingsTab(this.app, this));
 	}
 
 	onunload() {}
@@ -57,10 +57,10 @@ export default class MyPlugin extends Plugin {
 	}
 }
 
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
+class HexoIntegrationSettingsTab extends PluginSettingTab {
+	plugin: HexoIntegrationPlugin;
 
-	constructor(app: App, plugin: MyPlugin) {
+	constructor(app: App, plugin: HexoIntegrationPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
@@ -70,28 +70,28 @@ class SampleSettingTab extends PluginSettingTab {
 
 		containerEl.empty();
 
-		containerEl.createEl('h2', { text: 'Settings for my awesome plugin.' });
+		containerEl.createEl('h2', { text: 'Settings for Hexo Integration Plugin.' });
 
 		const hexoFolderSetting = new Setting(containerEl)
-			.setName('Source Path')
+			.setName('Hexo Source Path')
 			.setDesc('Specify the path to the Hexo source folder');
 		const hexoFolderInput = hexoFolderSetting.addText(text => text
 			.setPlaceholder('Enter the source path')
-			.setValue(this.plugin.settings.sourcePath)
+			.setValue(this.plugin.settings.hexoSourcePath)
 			.onChange(async (value) => {
-				console.log('Source Path: ' + value);
-				this.plugin.settings.sourcePath = value;
+				console.log('Hexo Source Path: ' + value);
+				this.plugin.settings.hexoSourcePath = value;
 				await this.plugin.saveSettings();
 			}));
 		const addButton = hexoFolderSetting.addButton(button => button
 			.setButtonText('Add')
 			.onClick(async () => {
-				if (this.plugin.settings.sourcePath) {
+				if (this.plugin.settings.hexoSourcePath) {
 					addButton.setDisabled(true);
 
 					const addingNotice = new Notice('Adding...');
 
-					const status = await this.plugin.simulateSymlinkImplementation();
+					const status = await this.plugin.createHexoSymlink();
 
 					addingNotice.hide();
 

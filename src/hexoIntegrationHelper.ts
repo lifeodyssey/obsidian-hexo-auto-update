@@ -1,6 +1,8 @@
 import { App, FileSystemAdapter } from 'obsidian';
 const symlinkDir = require('symlink-dir');
 const path = require('path');
+import { SimpleGit } from 'simple-git';
+
 
 export async function createHexoSymlink(app: App, hexoSourcePath: string): Promise<string> {
 	try {
@@ -21,4 +23,8 @@ export async function createHexoSymlink(app: App, hexoSourcePath: string): Promi
 		console.error('Failed to create symlink:', error);
 		return 'failure';
 	}
+}
+export async function checkForChanges(git: SimpleGit): Promise<string[]> {
+	const status = await git.status();
+	return status.files.map(file => file.path);
 }

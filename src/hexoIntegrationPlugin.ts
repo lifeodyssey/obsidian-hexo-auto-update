@@ -2,7 +2,7 @@ import { App, FileSystemAdapter, Plugin } from "obsidian";
 import { HexoIntegrationSettings } from "./types";
 import { DEFAULT_SETTINGS } from "./constants";
 import HexoIntegrationSettingsTab from "./hexoIntegrationSettingsTab";
-import { createHexoSymlink } from "./hexoIntegrationHelper";
+import { createHexoSymlink ,checkForChanges} from "./hexoIntegrationHelper";
 import { simpleGit, SimpleGit } from 'simple-git';
 
 export default class HexoIntegrationPlugin extends Plugin {
@@ -17,6 +17,15 @@ export default class HexoIntegrationPlugin extends Plugin {
 
 		// Initialize the SimpleGit instance with the Hexo blog path
 		this.git = simpleGit(hexoBlogPath);
+		// Call the `checkForChanges` function every minute (or any desired interval)
+		setInterval(async () => {
+			const changedFiles = await checkForChanges(this.git);
+			if (changedFiles.length > 0) {
+				console.log('Changed files:', changedFiles);
+
+				// TODO: Implement commit and push actions here
+			}
+		}, 60 * 1000);
 	}
 
 	onunload() {}

@@ -1,4 +1,4 @@
-import { App, FileSystemAdapter, Plugin } from "obsidian";
+import { App, FileSystemAdapter, Notice, Plugin } from "obsidian";
 import { HexoIntegrationSettings } from "./types";
 import { DEFAULT_SETTINGS } from "./constants";
 import HexoIntegrationSettingsTab from "./hexoIntegrationSettingsTab";
@@ -30,8 +30,11 @@ export default class HexoIntegrationPlugin extends Plugin {
 					await commitChanges(this.git, status);
 					await pushChanges(this.git);
 					console.log('Changes committed and pushed successfully.');
+					new Notice('Changes committed and pushed successfully.');
+
 				} catch (error) {
 					console.error('Error during commit and push:', error);
+					throw new Error(`Error during commit and push:${error.message}`);
 				}
 			}
 		}, 60 * 1000);

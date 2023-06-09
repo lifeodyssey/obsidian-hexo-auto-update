@@ -1,9 +1,9 @@
-import { App, FileSystemAdapter, Notice, Plugin } from "obsidian";
-import { HexoIntegrationSettings } from "./types";
-import { DEFAULT_SETTINGS } from "./constants";
+import {Notice, Plugin} from "obsidian";
+import {HexoIntegrationSettings} from "./types";
+import {DEFAULT_SETTINGS} from "./constants";
 import HexoIntegrationSettingsTab from "./hexoIntegrationSettingsTab";
-import { createHexoSymlink ,checkForChanges,commitChanges,pushChanges} from "./hexoIntegrationHelper";
-import { simpleGit, SimpleGit } from 'simple-git';
+import {checkForChanges, commitChanges, createHexoSymlink, pushChanges} from "./hexoIntegrationHelper";
+import {simpleGit, SimpleGit} from 'simple-git';
 
 export default class HexoIntegrationPlugin extends Plugin {
 	settings: HexoIntegrationSettings;
@@ -14,7 +14,6 @@ export default class HexoIntegrationPlugin extends Plugin {
 		this.addSettingTab(new HexoIntegrationSettingsTab(this.app, this));
 		// Get the Hexo blog path from the plugin settings
 		const hexoBlogPath = this.settings.hexoSourcePath;
-
 		// Initialize the SimpleGit instance with the Hexo blog path
 		this.git = simpleGit(hexoBlogPath);
 		// Call the `checkForChanges` function every minute (or any desired interval)
@@ -56,12 +55,10 @@ export default class HexoIntegrationPlugin extends Plugin {
 
 	async createSymlink() {
 		try {
-			const result = await createHexoSymlink(
+			return await createHexoSymlink(
 				this.app,
 				this.settings.hexoSourcePath
 			);
-
-			return result;
 		} catch (error) {
 			throw new Error(`Failed to create symlink: ${error.message}`);
 		}

@@ -3,7 +3,10 @@ import {
 	Notice,
 	PluginSettingTab,
 	Setting,
+	FileSystemAdapter
 } from "obsidian";
+const path = require('path');
+
 import HexoIntegrationPlugin from "./hexoIntegrationPlugin";
 
 export default class HexoIntegrationSettingsTab extends PluginSettingTab {
@@ -29,10 +32,11 @@ export default class HexoIntegrationSettingsTab extends PluginSettingTab {
 		const hexoFolderInput = hexoFolderSetting
 			.addText((text) =>
 				text
-					.setPlaceholder("Enter the source path")
+					.setPlaceholder("Enter the absolute source path")
 					.setValue(this.plugin.settings.hexoSourcePath)
 					.onChange(async (value) => {
 						console.log("Hexo Source Path: " + value);
+
 						this.plugin.settings.hexoSourcePath = value;
 						await this.plugin.saveSettings();
 					})

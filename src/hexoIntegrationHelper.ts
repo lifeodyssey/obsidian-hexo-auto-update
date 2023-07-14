@@ -8,15 +8,13 @@ const path = require('path');
 export async function createHexoSymlink(app: App, hexoSourcePath: string): Promise<string> {
 	try {
 		const vaultPath = (app.vault.adapter as FileSystemAdapter).getBasePath();
-		const hexoFolderName = hexoSourcePath.split('/').pop();
-		const newFolderPath = path.join(vaultPath, hexoFolderName);
 
-		const result = await symlinkDir(hexoSourcePath, newFolderPath);
+		const result = await symlinkDir(hexoSourcePath, vaultPath);
 
 		if (result.reused) {
-			console.log('Symlink already exists and has been reused:', newFolderPath);
+			console.log('Symlink already exists and has been reused:', vaultPath);
 		} else {
-			console.log('Symlink successfully created:', newFolderPath);
+			console.log('Symlink successfully created:', vaultPath);
 		}
 
 		return 'success';

@@ -43,7 +43,7 @@ export async function checkForChanges(git: SimpleGit): Promise<StatusResult | nu
 		return status;
 	} else {
 		// otherwise, return null
-		return null;
+		return null
 	}
 }
 

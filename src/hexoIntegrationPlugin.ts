@@ -19,27 +19,30 @@ export default class HexoIntegrationPlugin extends Plugin {
 		// Call the `checkForChanges` function every minute (or any desired interval)
 		setInterval(async () => {
 			const status = await checkForChanges(this.git);
-			const changedFilesCount = status.created.length + status.modified.length + status.deleted.length;
+			if (status != null) {
+				const changedFilesCount = status.created.length + status.modified.length + status.deleted.length;
 
-			if (changedFilesCount > 0) {
-				console.log('Changed files:', status.files);
+				if (changedFilesCount > 0) {
+					console.log('Changed files:', status.files);
 
-				// Commit and push the changes
-				try {
-					await commitChanges(this.git, status);
-					await pushChanges(this.git);
-					console.log('Changes committed and pushed successfully.');
-					new Notice('Changes committed and pushed successfully.');
+					// Commit and push the changes
+					try {
+						await commitChanges(this.git, status);
+						await pushChanges(this.git);
+						console.log('Changes committed and pushed successfully.');
+						new Notice('Changes committed and pushed successfully.');
 
-				} catch (error) {
-					console.error('Error during commit and push:', error);
-					throw new Error(`Error during commit and push:${error.message}`);
+					} catch (error) {
+						console.error('Error during commit and push:', error);
+						throw new Error(`Error during commit and push:${error.message}`);
+					}
 				}
 			}
 		}, 60 * 1000);
 	}
 
-	onunload() {}
+	onunload() {
+	}
 
 	async loadSettings() {
 		this.settings = Object.assign(

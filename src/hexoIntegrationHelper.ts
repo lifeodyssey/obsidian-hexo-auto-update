@@ -34,10 +34,17 @@ export async function createHexoSymlink(app: App, hexoSourcePath: string, target
 	}
 }
 
-export async function checkForChanges(git: SimpleGit): Promise<StatusResult> {
+export async function checkForChanges(git: SimpleGit): Promise<StatusResult | null> {
 	const status = await git.status();
-	return status;
-
+	// check if any of the changes contain '_posts' in their directory path
+	const changesInPosts = status.files.some(file => /_posts/.test(file.path));
+	if (changesInPosts) {
+		// if there are changes in the '_posts' directory, return the status
+		return status;
+	} else {
+		// otherwise, return null
+		return null;
+	}
 }
 
 export async function commitChanges(git: SimpleGit, status: StatusResult): Promise<void> {

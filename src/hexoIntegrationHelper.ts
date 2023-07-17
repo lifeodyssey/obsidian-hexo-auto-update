@@ -6,11 +6,11 @@ const symlinkDir = require('symlink-dir');
 const path = require('path');
 
 
-export async function createHexoSymlink(app: App, hexoSourcePath: string): Promise<string> {
+export async function createHexoSymlink(app: App, hexoSourcePath: string, targetFolder: string): Promise<string> {
 	try {
 		const vaultPath = (app.vault.adapter as FileSystemAdapter).getBasePath();
 		const hexoFolderName = hexoSourcePath.split('/').pop();
-		const newFolderPath = path.join(vaultPath, hexoFolderName);
+		const newFolderPath = path.join(vaultPath, targetFolder, hexoFolderName); // <--- changed this
 
 		const isWindows = os.platform() === 'win32';
 		var result;
@@ -21,7 +21,7 @@ export async function createHexoSymlink(app: App, hexoSourcePath: string): Promi
 			// Create a symlink on other systems (e.g., macOS, Linux)
 			result = await symlinkDir(hexoSourcePath, newFolderPath);
 		}
-		
+
 		if (result.reused) {
 			console.log('Symlink/junction already exists and has been reused:', newFolderPath);
 		} else {

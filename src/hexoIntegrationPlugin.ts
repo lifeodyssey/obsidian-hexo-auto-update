@@ -57,7 +57,8 @@ export default class HexoIntegrationPlugin extends Plugin {
 		try {
 			return await createHexoSymlink(
 				this.app,
-				this.settings.hexoSourcePath
+				this.settings.hexoSourcePath,
+				'Blog'
 			);
 		} catch (error) {
 			throw new Error(`Failed to create symlink: ${error.message}`);

@@ -1,5 +1,6 @@
 import {App, FileSystemAdapter} from 'obsidian';
 import {SimpleGit, StatusResult} from 'simple-git';
+import * as os from 'os';
 
 const symlinkDir = require('symlink-dir');
 const path = require('path');
@@ -8,15 +9,24 @@ const path = require('path');
 export async function createHexoSymlink(app: App, hexoSourcePath: string): Promise<string> {
 	try {
 		const vaultPath = (app.vault.adapter as FileSystemAdapter).getBasePath();
+		const hexoFolderName = hexoSourcePath.split('/').pop();
+		const newFolderPath = path.join(vaultPath, hexoFolderName);
 
-		const result = await symlinkDir(hexoSourcePath, vaultPath);
-
-		if (result.reused) {
-			console.log('Symlink already exists and has been reused:', vaultPath);
+		const isWindows = os.platform() === 'win32';
+		var result;
+		if (isWindows) {
+			// Create a directory junction on Windows
+			result = await symlinkDir(hexoSourcePath, newFolderPath, 'junction');
 		} else {
-			console.log('Symlink successfully created:', vaultPath);
+			// Create a symlink on other systems (e.g., macOS, Linux)
+			result = await symlinkDir(hexoSourcePath, newFolderPath);
 		}
-
+		
+		if (result.reused) {
+			console.log('Symlink/junction already exists and has been reused:', newFolderPath);
+		} else {
+			console.log('Symlink/junction successfully created:', newFolderPath);
+		}
 		return 'success';
 	} catch (error) {
 		console.error('Failed to create symlink:', error);
@@ -27,7 +37,7 @@ export async function createHexoSymlink(app: App, hexoSourcePath: string): Promi
 export async function checkForChanges(git: SimpleGit): Promise<StatusResult> {
 	const status = await git.status();
 	return status;
-	
+
 }
 
 export async function commitChanges(git: SimpleGit, status: StatusResult): Promise<void> {

@@ -1,8 +1,8 @@
-import {Notice, Plugin} from "obsidian";
+import {Notice, Plugin,debounce, TFolder,TAbstractFile} from "obsidian";
 import {HexoIntegrationSettings} from "./types";
 import {DEFAULT_SETTINGS} from "./constants";
 import HexoIntegrationSettingsTab from "./hexoIntegrationSettingsTab";
-import {checkForChanges, commitChanges, createHexoSymlink, pushChanges} from "./hexoIntegrationHelper";
+import {checkForChanges, commitChanges, createSystemSpecificSymlink, pushChanges,validateSymlink} from "./hexoIntegrationHelper";
 import {simpleGit, SimpleGit} from 'simple-git';
 
 export default class HexoIntegrationPlugin extends Plugin {
@@ -10,10 +10,25 @@ export default class HexoIntegrationPlugin extends Plugin {
 	git: SimpleGit;
 
 	async onload() {
+
 		await this.loadSettings();
 		this.addSettingTab(new HexoIntegrationSettingsTab(this.app, this));
-		// Get the Hexo blog path from the plugin settings
 		const hexoBlogPath = this.settings.hexoSourcePath;
+
+		this.git = simpleGit(hexoBlogPath);
+
+		// Add the following line to validate the symlink when the plugin loads
+		await validateSymlink(this.app, hexoBlogPath);
+
+		if (!this.settings.hexoSourcePath) {
+			new Notice('Please configure the path to your Hexo blog in the settings.');
+			return;
+		}
+
+		await this.createSymlink();
+
+		this.addSettingTab(new HexoIntegrationSettingsTab(this.app, this));
+		// Get the Hexo blog path from the plugin settings
 		// Initialize the SimpleGit instance with the Hexo blog path
 		this.git = simpleGit(hexoBlogPath);
 		// Call the `checkForChanges` function every minute (or any desired interval)
@@ -58,11 +73,15 @@ export default class HexoIntegrationPlugin extends Plugin {
 
 	async createSymlink() {
 		try {
-			return await createHexoSymlink(
-				this.app,
-				this.settings.hexoSourcePath,
-				'Blog'
-			);
+			const status = await createSystemSpecificSymlink(this.app, this.settings.hexoSourcePath);
+			
+
+			// if (status === 'success') {
+			// 	// Refresh the Obsidian file explorer to show the newly created symlink
+			// 	this.refreshFiles();
+			// }
+
+			return status;
 		} catch (error) {
 			throw new Error(`Failed to create symlink: ${error.message}`);
 		}

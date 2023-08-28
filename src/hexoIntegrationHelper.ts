@@ -2,38 +2,91 @@ import {App, FileSystemAdapter} from 'obsidian';
 import {SimpleGit, StatusResult} from 'simple-git';
 import * as os from 'os';
 import * as fs from 'fs';
+import {exec} from 'child_process';
 
 
 const symlinkDir = require('symlink-dir');
 const path = require('path');
 
-
 export async function createSystemSpecificSymlink(app: App, hexoSourcePath: string): Promise<string> {
-	try {
-		const vaultPath = (app.vault.adapter as FileSystemAdapter).getBasePath();
-		const isWindows = os.platform() === 'win32';
-		const targetFolder = isWindows ? 'Win Blog' : 'Mac Blog';
-		const newFolderPath = path.join(vaultPath, targetFolder);
+	const vaultPath = (app.vault.adapter as FileSystemAdapter).getBasePath();
+	const isWindows = os.platform() === 'win32';
+	const targetFolder = isWindows ? 'Win Blog' : 'Mac Blog';
+	const newFolderPath = path.join(vaultPath, targetFolder);
+	console.log("Debug: hexoSourcePath:", hexoSourcePath);
+	console.log("Debug: newFolderPath:", newFolderPath);
 
-		if (!fs.existsSync(newFolderPath) || !fs.lstatSync(newFolderPath).isSymbolicLink()) {
-			var result;
-			if (isWindows) {
-				result = await symlinkDir(hexoSourcePath, newFolderPath, 'junction');
-			} else {
-				result = await symlinkDir(hexoSourcePath, newFolderPath);
-			}
+	if (!isSourcePathValid(hexoSourcePath)) {
+		return 'The source directory does not exist';
+	}
 
-			console.log('Symlink successfully created:', newFolderPath);
-		} else {
-			console.log('Symlink already exists and is valid:', newFolderPath);
-		}
+	if (isTargetPathInvalid(newFolderPath)) {
+		return 'The target directory already exists and is not a symbolic link';
+	}
 
-		return 'success';
-	} catch (error) {
-		console.error('Failed to create symlink:', error);
-		return 'failure';
+	if (isWindows) {
+		return await createJunctionForWindows(hexoSourcePath, newFolderPath);
+	} else {
+		return createSymlinkForMac(newFolderPath);
 	}
 }
+
+function isSourcePathValid(sourcePath: string): boolean {
+	if (fs.existsSync(sourcePath)) {
+		console.log('Source exists:', sourcePath);
+		return true;
+	} else {
+		console.log('Source does not exist:', sourcePath);
+		return false;
+	}
+}
+
+function isTargetPathInvalid(targetPath: string): boolean {
+	if (fs.existsSync(targetPath)) {
+		if (fs.lstatSync(targetPath).isSymbolicLink()) {
+			console.log('Target exists and is a symbolic link:', targetPath);
+			return false;
+		} else {
+			console.log('Target exists but is not a symbolic link:', targetPath);
+			return true;
+		}
+	} else {
+		console.log('Target does not exist:', targetPath);
+		return false;
+	}
+}
+
+async function createJunctionForWindows(hexoSourcePath: string, newFolderPath: string): Promise<string> {
+	const powershellPath = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+	return new Promise((resolve, reject) => {
+		exec(`${powershellPath} New-Item -ItemType Junction -Path "${newFolderPath}" -Target "${hexoSourcePath}"`, (error, stdout, stderr) => {
+			if (error) {
+				console.error('Failed to create junction:', error.message);
+				console.error('Error Output:', stderr);
+				reject(error.message);
+			} else {
+				console.log('Junction successfully created:', stdout);
+				resolve('success');
+			}
+		});
+	});
+}
+
+
+async function createSymlinkForMac(newFolderPath: string): Promise<string> {
+	// Existing macOS behavior
+	const sourceFolderPath = getBlogPathBasedOnPlatform(false, newFolderPath);
+	if (!fs.existsSync(newFolderPath) || !fs.lstatSync(newFolderPath).isSymbolicLink()) {
+		await symlinkDir(sourceFolderPath, newFolderPath);
+		console.log('Symlink successfully created:', newFolderPath);
+		return 'success';
+	} else {
+		console.log('Symlink already exists and is valid:', newFolderPath);
+		return 'Symlink already exists';
+	}
+}
+
+
 async function isSymlinked(hexoSourcePath: string, newFolderPath: string): Promise<boolean> {
 	try {
 		const stats = await fs.promises.lstat(newFolderPath);
@@ -51,6 +104,7 @@ async function isSymlinked(hexoSourcePath: string, newFolderPath: string): Promi
 		return false;
 	}
 }
+
 export async function validateSymlink(app: App, hexoSourcePath: string): Promise<void> {
 	const vaultPath = (app.vault.adapter as FileSystemAdapter).getBasePath();
 	const isWindows = os.platform() === 'win32';
@@ -96,3 +150,19 @@ export async function commitChanges(git: SimpleGit, status: StatusResult): Promi
 export async function pushChanges(git: SimpleGit): Promise<void> {
 	await git.push();
 }
+
+
+function applyRelativePathToOS(relativePath: string, isWindows: boolean): string {
+	if (isWindows) {
+		return path.join('C:\\Users', os.userInfo().username, relativePath);
+	} else {
+		return path.join('/Users', os.userInfo().username, 'Library', 'CloudStorage', 'OneDrive-Personal', relativePath);
+	}
+}
+
+function getBlogPathBasedOnPlatform(isWindows: boolean, vaultPath: string): string {
+	const baseDir = vaultPath.split('OneDrive')[0] + (isWindows ? 'OneDrive\\Documents' : 'OneDrive-Personal/Documents');
+	const blogFolderName = "Blog/source";
+	return path.join(baseDir, blogFolderName);
+}
+

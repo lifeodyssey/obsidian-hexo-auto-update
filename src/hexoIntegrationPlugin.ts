@@ -6,6 +6,7 @@ import {checkForChanges, commitChanges, createSystemSpecificSymlink, pushChanges
 import {simpleGit, SimpleGit} from 'simple-git';
 
 export default class HexoIntegrationPlugin extends Plugin {
+	// TODO load file explorer when add symlink
 	settings: HexoIntegrationSettings;
 	git: SimpleGit;
 

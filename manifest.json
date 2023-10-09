@@ -1,11 +1,11 @@
 {
 	"id": "obsidian-hexo-update-plugin",
 	"name": "Hexo Auto updater",
-	"version": "0.0.2",
-	"minAppVersion": "0.0.2",
+	"version": "0.0.1",
+	"minAppVersion": "0.0.1",
 	"description": "This is a hexo plugin for Obsidian that enable the auto update. ",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
-	"isDesktopOnly": false
+	"author": "Zhenjia Zhou",
+	"authorUrl": "https://github.com/lifeodyssey",
+	"fundingUrl": "https://github.com/lifeodyssey/obsidian-hexo-auto-update",
+	"isDesktopOnly": true
 }

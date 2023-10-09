@@ -22,6 +22,9 @@ The plugin supports cloud storage, such as iCloud, Dropbox, OneDrive, etc. You c
 - [ ] Unit test, integration test and related CI for the code quality.
 ## Installation
 ### Pre-requisites
+In this plugin, we need to repository. One is the source file repository, and the other is the blog repository.
+
+The blog source file repository is the repository that you use to store your blog source file. It could be private. And another repository is used to store the compiled static web file. Please follow the [GitHub pages](https://pages.github.com/).
 
 ### GitHub Actions setup
 ### Obsidian setup

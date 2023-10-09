@@ -1,9 +1,9 @@
 {
-	"id": "obsidian-hexo-plugin",
-	"name": "Hexo Plugin",
+	"id": "obsidian-hexo-update-plugin",
+	"name": "Hexo Auto updater",
 	"version": "0.0.2",
 	"minAppVersion": "0.0.2",
-	"description": "This is a hexo plugin for Obsidian. ",
+	"description": "This is a hexo plugin for Obsidian that enable the auto update. ",
 	"author": "Obsidian",
 	"authorUrl": "https://obsidian.md",
 	"fundingUrl": "https://obsidian.md/pricing",

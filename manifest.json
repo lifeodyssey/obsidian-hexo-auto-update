@@ -1,8 +1,8 @@
 {
 	"id": "obsidian-hexo-plugin",
 	"name": "Hexo Plugin",
-	"version": "0.0.1",
-	"minAppVersion": "0.0.1",
+	"version": "0.0.2",
+	"minAppVersion": "0.0.2",
 	"description": "This is a hexo plugin for Obsidian. ",
 	"author": "Obsidian",
 	"authorUrl": "https://obsidian.md",

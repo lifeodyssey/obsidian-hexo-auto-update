@@ -1,5 +1,5 @@
 {
-	"id": "obsidian-hexo-update-plugin",
+	"id": "hexo-auto-updater",
 	"name": "Hexo Auto updater",
 	"version": "0.0.1",
 	"minAppVersion": "0.0.1",

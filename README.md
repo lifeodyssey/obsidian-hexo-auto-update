@@ -20,6 +20,7 @@ The plugin supports cloud storage, such as iCloud, Dropbox, OneDrive, etc. You c
 
 - [ ] Enable the function windows. Currently only support macOS.
 - [ ] Unit test, integration test and related CI for the code quality.
+- [ ] Transform and substitute Obsidian-style internal links to Hexo-style URLs in Github Actions.
 ## Installation
 ### Pre-requisites
 In this plugin, we need to repository. One is the source file repository, and the other is the blog repository.

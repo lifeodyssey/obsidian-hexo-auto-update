@@ -1,6 +1,6 @@
 # Obsidian-Hexo Integration Plugin
 
-The Obsidian-Hexo Integration plugin allows you to monitor changes in your Obsidian vault, specifically the _posts folder, and automatically commit and push them to your Hexo blog repository, without set up local node.js environment and accelerate the speed from writing to publishment.
+The Obsidian-Hexo Integration plugin allows you to monitor changes in your Obsidian vault, specifically the _posts folder, and automatically commit and push them to your Hexo blog repository, without set up local node.js environment and accelerate the speed from writing to publication.
 
 ## Features
 
@@ -23,11 +23,90 @@ The plugin supports cloud storage, such as iCloud, Dropbox, OneDrive, etc. You c
 - [ ] Transform and substitute Obsidian-style internal links to Hexo-style URLs in Github Actions.
 ## Installation
 ### Pre-requisites
-In this plugin, we need to repository. One is the source file repository, and the other is the blog repository.
+In this plugin, we need two repository. One is the source file repository, and the other is the blog repository.
 
-The blog source file repository is the repository that you use to store your blog source file. It could be private. And another repository is used to store the compiled static web file. Please follow the [GitHub pages](https://pages.github.com/).
+The blog source file repository is the repository that you use to store your blog source file. It could be private. And another repository is used to store the compiled static web file. Please follow the [GitHub pages](https://pages.github.co).
 
-### GitHub Actions setup
+Then please generate the ssh key pair using the following command:
+``ssh-keygen -t rsa -b 4096 -C “example@email.com” -f deploy-key ``
+
+### GitHub Repositories setup
+In the repository that you use to store your blog source file, please:
+1. Add the secrete key to the repository's  secrete follow this [link](https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions).
+2. Set up the GitHub Actions. In the top level of the repository, create a folder named .github/workflows. In the folder, create a file named hexo.yml. Copy the following content to the file.
+```
+name: deploy blog
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  GIT_USER: exampleuser
+  GIT_EMAIL: exampleuser@email.com
+  THEME_REPO: https://github.com/next-theme/hexo-theme-next
+  THEME_BRANCH: master
+  DEPLOY_REPO: exampleuser/exampleuser.github.io
+  DEPLOY_BRANCH: master
+
+jobs:
+  build:
+    name: Build on node ${{ matrix.node_version }} and ${{ matrix.os }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        node_version: [18.x]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Checkout deploy repo
+        uses: actions/checkout@v3
+        with:
+          repository: ${{ env.DEPLOY_REPO }}
+          ref: ${{ env.DEPLOY_BRANCH }}
+          path: .deploy_git
+
+      - name: Use Node.js ${{ matrix.node_version }}
+        uses: actions/setup-node@v1
+        with:
+          node-version: ${{ matrix.node_version }}
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.PRIVIATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -t rsa github.com >> ~/.ssh/known_hosts
+
+      - name: Configuration environment
+        run: |
+          sudo timedatectl set-timezone "YOUR TIME ZONE"
+          git config --global user.name $GIT_USER
+          git config --global user.email $GIT_EMAIL
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get install pandoc
+          npx npm-check-updates -u  
+          npm install hexo-cli -g
+          npm install
+
+      - name: Deploy hexo
+        run: |
+          eval "$(ssh-agent -s)"
+          ssh-add ~/.ssh/id_rsa
+          npm run clean
+          npm run build
+          npm run deploy
+```
+Please replace the username,email and private key name with your own content.
+
+In the repository that you use to store the compiled static web file, please add the public key to the repository's deploy key follow this [link](https://docs.github.com/en/developers/overview/managing-deploy-keys#deploy-keys).
+
 ### Obsidian setup
 ### Write and publish
 Download the latest release from the GitHub repository.

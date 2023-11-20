@@ -31,7 +31,7 @@ jobs:
                   if [[ -n "$TAG_EXISTS" ]]; then
                     echo "Version tag $VERSION_PACKAGE already exists."
                     echo "No new release needed."
-                    echo "::set-output name=release_needed::false"
+                    echo "release_needed=false" >> $GITHUB_ENV
                     exit 0
                   fi
                   
@@ -47,19 +47,19 @@ jobs:
                   # Check if the version has changed
                   if [[ "$VERSION_MANIFEST" != "$PREVIOUS_VERSION_MANIFEST" || "$VERSION_PACKAGE" != "$PREVIOUS_VERSION_PACKAGE" ]]; then
                     echo "Version has changed to $VERSION_PACKAGE."
-                    echo "::set-output name=release_needed::true"
-                    echo "::set-output name=new_version::$VERSION_PACKAGE"
+                    echo "release_needed=true" >> $GITHUB_ENV
+                    echo "new_version=$VERSION_PACKAGE" >> $GITHUB_ENV
                   else
                     echo "No version change detected."
-                    echo "::set-output name=release_needed::false"
+                    echo "release_needed=false" >> $GITHUB_ENV
                   fi
 
             - name: Create draft release
-              if: steps.version_check.outputs.release_needed == 'true'
+              if: env.release_needed == 'true'
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
-                  VERSION=${{ steps.version_check.outputs.new_version }}
+                  VERSION=$new_version
                   gh release create $VERSION \
                     --title "Draft Release v$VERSION" \
                     --notes "Placeholder for release notes" \

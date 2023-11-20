@@ -1,13 +1,9 @@
-import {
-	App,
-	Notice,
-	PluginSettingTab,
-	Setting,
-	FileSystemAdapter
-} from "obsidian";
-const path = require('path');
-
+import {App, Notice, PluginSettingTab, Setting} from "obsidian";
 import HexoIntegrationPlugin from "./hexoIntegrationPlugin";
+
+const path = require('path');
+const {dialog} = require('electron').remote;
+
 
 export default class HexoIntegrationSettingsTab extends PluginSettingTab {
 	plugin: HexoIntegrationPlugin;
@@ -18,7 +14,7 @@ export default class HexoIntegrationSettingsTab extends PluginSettingTab {
 	}
 
 	display(): void {
-		const { containerEl } = this;
+		const {containerEl} = this;
 
 		containerEl.empty();
 
@@ -28,19 +24,23 @@ export default class HexoIntegrationSettingsTab extends PluginSettingTab {
 
 		const hexoFolderSetting = new Setting(containerEl)
 			.setName("Hexo Source Path")
-			.setDesc("Specify the path to the Hexo source folder");
-		const hexoFolderInput = hexoFolderSetting
-			.addText((text) =>
-				text
-					.setPlaceholder("Enter the absolute source path")
-					.setValue(this.plugin.settings.hexoSourcePath)
-					.onChange(async (value) => {
-						console.log("Hexo Source Path: " + value);
+			.setDesc("Specify the path to the Hexo source folder")
+			.addButton(button => {
+				button.setButtonText("Select Folder")
+					.onClick(async () => {
+						const result = await dialog.showOpenDialog({
+							properties: ['openDirectory']
+						});
+						if (!result.canceled && result.filePaths.length > 0) {
+							const selectedPath = result.filePaths[0];
+							console.log("Selected Hexo Source Path: " + selectedPath);
 
-						this.plugin.settings.hexoSourcePath = value;
-						await this.plugin.saveSettings();
-					})
-			);
+							this.plugin.settings.hexoSourcePath = selectedPath;
+							await this.plugin.saveSettings();
+							new Notice("Hexo source path set to: " + selectedPath);
+						}
+					});
+			})
 		const addButton = hexoFolderSetting.addButton((button) =>
 			button
 				.setButtonText("Add")

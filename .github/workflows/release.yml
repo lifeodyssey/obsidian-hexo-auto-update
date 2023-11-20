@@ -59,6 +59,7 @@ jobs:
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
+                  npm run build
                   VERSION=$new_version
                   gh release create $VERSION \
                     --title "Draft Release v$VERSION" \

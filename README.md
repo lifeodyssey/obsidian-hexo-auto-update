@@ -108,6 +108,7 @@ Please replace the username,email and private key name with your own content.
 In the repository that you use to store the compiled static web file, please add the public key to the repository's deploy key follow this [link](https://docs.github.com/en/developers/overview/managing-deploy-keys#deploy-keys).
 
 ### Obsidian setup
+Install the plugin in Obsidian, and select the destination folder(I recommend to select the ``source`` folder in Hexo root path) use the selection button.
 ### Write and publish
 Download the latest release from the GitHub repository.
 Extract the obsidian-hexo-integration folder from the zip to your vault's plugins folder: <vault>/.obsidian/plugins/

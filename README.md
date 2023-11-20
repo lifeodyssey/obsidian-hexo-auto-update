@@ -18,7 +18,7 @@ The plugin supports cloud storage, such as iCloud, Dropbox, OneDrive, etc. You c
 
 ### Future features list
 
-- [ ] Enable the function windows. Currently only support macOS.
+- [ ] Enable the function on windows. Currently only support macOS.
 - [ ] Unit test, integration test and related CI for the code quality.
 - [ ] Transform and substitute Obsidian-style internal links to Hexo-style URLs in Github Actions.
 ## Installation

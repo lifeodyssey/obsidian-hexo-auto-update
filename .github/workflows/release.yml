@@ -59,6 +59,8 @@ jobs:
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
+                  npm run clean
+                  npm install
                   npm run build
                   VERSION=$new_version
                   gh release create $VERSION \

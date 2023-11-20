@@ -6,44 +6,60 @@ on:
             - main
 
 jobs:
-    build-and-release:
+    release:
         runs-on: ubuntu-latest
-
         steps:
             - name: Check out repository
               uses: actions/checkout@v3
+              with:
+                  fetch-depth: 2 # Fetches the commit history to compare changes
 
             - name: Use Node.js
               uses: actions/setup-node@v3
               with:
-                  node-version: "18.x"
+                  node-version: '18.x'
 
-            - name: Install dependencies
-              run: npm install
-
-            - name: Build plugin
-              run: npm run build
-
-            - name: Check for version change and consistency
+            - name: Detect version change
               id: version_check
               run: |
-                  VERSION_MANIFEST=$(cat manifest.json | jq -r '.version')
-                  VERSION_PACKAGE=$(cat package.json | jq -r '.version')
+                  git fetch --depth=1 origin +refs/tags/*:refs/tags/*
+                  VERSION_MANIFEST=$(jq -r '.version' manifest.json)
+                  VERSION_PACKAGE=$(jq -r '.version' package.json)
+                  TAG_EXISTS=$(git tag -l "$VERSION_PACKAGE")
                   
-                  if [ "$VERSION_MANIFEST" != "$VERSION_PACKAGE" ]; then
-                    echo "Versions in manifest.json and package.json do not match."
+                  # Check if the tag already exists
+                  if [[ -n "$TAG_EXISTS" ]]; then
+                    echo "Version tag $VERSION_PACKAGE already exists."
+                    echo "No new release needed."
+                    echo "::set-output name=release_needed::false"
+                    exit 0
+                  fi
+                  
+                  # Check versions match between files
+                  if [[ "$VERSION_MANIFEST" != "$VERSION_PACKAGE" ]]; then
+                    echo "Error: Versions in manifest.json and package.json do not match."
                     exit 1
                   fi
                   
-                  echo "VERSION=$VERSION_MANIFEST" >> $GITHUB_ENV
-                  echo "::set-output name=version::$VERSION_MANIFEST"
+                  PREVIOUS_VERSION_MANIFEST=$(git diff HEAD^ HEAD -- manifest.json | grep '"version":' | head -n 1 | awk '{print $2}' | tr -d '",')
+                  PREVIOUS_VERSION_PACKAGE=$(git diff HEAD^ HEAD -- package.json | grep '"version":' | head -n 1 | awk '{print $2}' | tr -d '",')
+                  
+                  # Check if the version has changed
+                  if [[ "$VERSION_MANIFEST" != "$PREVIOUS_VERSION_MANIFEST" || "$VERSION_PACKAGE" != "$PREVIOUS_VERSION_PACKAGE" ]]; then
+                    echo "Version has changed to $VERSION_PACKAGE."
+                    echo "::set-output name=release_needed::true"
+                    echo "::set-output name=new_version::$VERSION_PACKAGE"
+                  else
+                    echo "No version change detected."
+                    echo "::set-output name=release_needed::false"
+                  fi
 
             - name: Create draft release
-              if: steps.version_check.outputs.version
+              if: steps.version_check.outputs.release_needed == 'true'
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
-                  VERSION=$(echo ${{ steps.version_check.outputs.version }})
+                  VERSION=${{ steps.version_check.outputs.new_version }}
                   gh release create $VERSION \
                     --title "Draft Release v$VERSION" \
                     --notes "Placeholder for release notes" \

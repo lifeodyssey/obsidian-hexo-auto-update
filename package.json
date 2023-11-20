@@ -1,6 +1,6 @@
 {
 	"name": "hexo-auto-updater",
-	"version": "0.0.1",
+	"version": "0.0.2",
 	"description": "This is a hexo plugin for Obsidian that enable the auto update.",
 	"main": "main.js",
 	"scripts": {

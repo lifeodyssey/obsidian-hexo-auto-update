@@ -1,14 +1,14 @@
 import {App, Notice, PluginSettingTab, Setting} from "obsidian";
-import HexoIntegrationPlugin from "../hexoIntegrationPlugin";
+import Index from "../index";
 
 const path = require('path');
 const {dialog} = require('electron').remote;
 
 
 export default class HexoIntegrationSettingsTab extends PluginSettingTab {
-    plugin: HexoIntegrationPlugin;
+    plugin: Index;
 
-    constructor(app: App, plugin: HexoIntegrationPlugin) {
+    constructor(app: App, plugin: Index) {
         super(app, plugin);
         this.plugin = plugin;
     }

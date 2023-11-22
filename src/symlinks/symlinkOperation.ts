@@ -14,7 +14,7 @@ export async function createSystemSpecificSymlink(app: App, hexoSourcePath: stri
         if (!fs.existsSync(newFolderPath) || !fs.lstatSync(newFolderPath).isSymbolicLink()) {
             var result;
             if (isWindows) {
-                result = await symlinkDir(hexoSourcePath, newFolderPath, 'junction');
+                result = await symlinkDir(hexoSourcePath, newFolderPath, );
             } else {
                 result = await symlinkDir(hexoSourcePath, newFolderPath);
             }

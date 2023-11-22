@@ -7,7 +7,9 @@
 /dataSources/
 /dataSources.local.xml
 /node_modules/
+/coverage
+/dist
 .idea
 package-lock.json
 ```
-K
+

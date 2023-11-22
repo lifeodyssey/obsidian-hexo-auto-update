@@ -2,13 +2,13 @@ import {Notice, Plugin} from "obsidian";
 import {HexoIntegrationSettings} from "./types";
 import {DEFAULT_SETTINGS} from "./constants";
 import HexoIntegrationSettingsTab from "./settings/hexoIntegrationSettingsTab";
-import {simpleGit, SimpleGit} from 'simple-git';
-import {checkForChanges, commitChanges, pushChanges} from "./git/handler";
-import {createSystemSpecificSymlink, validateSymlink} from "./symlink/symlinkOperation";
+import {simpleGit} from 'simple-git';
+import {GitHandler} from "./git";
+import {SymlinkHandler} from "./symlink";
 
 export default class HexoIntegrationPlugin extends Plugin {
     settings: HexoIntegrationSettings;
-    git: SimpleGit;
+    gitHandler: GitHandler;
 
     async onload() {
 
@@ -16,10 +16,12 @@ export default class HexoIntegrationPlugin extends Plugin {
         this.addSettingTab(new HexoIntegrationSettingsTab(this.app, this));
         const hexoBlogPath = this.settings.hexoSourcePath;
 
-        this.git = simpleGit(hexoBlogPath);
+        this.gitHandler = new GitHandler(simpleGit(hexoBlogPath));
 
         // Add the following line to validate the symlink when the plugin loads
-        await validateSymlink(this.app, hexoBlogPath);
+        const symlinkHandler = new SymlinkHandler(this.app); // Using the new SymlinkOperator
+
+        await symlinkHandler.validateSymlink(hexoBlogPath);
 
         if (!this.settings.hexoSourcePath) {
             new Notice('Please configure the path to your Hexo blog in the settings.');
@@ -31,10 +33,9 @@ export default class HexoIntegrationPlugin extends Plugin {
         this.addSettingTab(new HexoIntegrationSettingsTab(this.app, this));
         // Get the Hexo blog path from the plugin settings
         // Initialize the SimpleGit instance with the Hexo blog path
-        this.git = simpleGit(hexoBlogPath);
         // Call the `checkForChanges` function every minute (or any desired interval)
         setInterval(async () => {
-            const status = await checkForChanges(this.git);
+            const status = await this.gitHandler.checkForChanges();
             if (status != null) {
                 const changedFilesCount = status.created.length + status.modified.length + status.deleted.length;
 
@@ -43,8 +44,8 @@ export default class HexoIntegrationPlugin extends Plugin {
 
                     // Commit and push the changes
                     try {
-                        await commitChanges(this.git, status);
-                        await pushChanges(this.git);
+                        await this.gitHandler.commitChanges(status);
+                        await this.gitHandler.pushChanges();
                         console.log('Changes committed and pushed successfully.');
                         new Notice('Changes committed and pushed successfully.');
 
@@ -74,7 +75,9 @@ export default class HexoIntegrationPlugin extends Plugin {
 
     async createSymlink() {
         try {
-            const status = await createSystemSpecificSymlink(this.app, this.settings.hexoSourcePath);
+            const symlinkHandler = new SymlinkHandler(this.app); // Using the new SymlinkOperator
+
+            const status = await symlinkHandler.createSystemSpecificSymlink(this.settings.hexoSourcePath);
 
 
             // if (status === 'success') {

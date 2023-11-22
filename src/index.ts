@@ -3,7 +3,7 @@ import {HexoIntegrationSettings} from "./types";
 import {DEFAULT_SETTINGS} from "./constants";
 import HexoIntegrationSettingsTab from "./settings/hexoIntegrationSettingsTab";
 import {simpleGit, SimpleGit} from 'simple-git';
-import {checkForChanges, commitChanges, pushChanges} from "./git/gitOperator";
+import {checkForChanges, commitChanges, pushChanges} from "./git/handler";
 import {createSystemSpecificSymlink, validateSymlink} from "./symlinks/symlinkOperation";
 
 export default class HexoIntegrationPlugin extends Plugin {

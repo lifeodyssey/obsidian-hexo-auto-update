@@ -1,6 +1,7 @@
 import { SimpleGit, StatusResult } from 'simple-git';
+import {IGitHandler} from "./interface";
 
-export class GitOperator {
+export class GitHandler implements IGitHandler{
     private git: SimpleGit;
 
     constructor(git: SimpleGit) {

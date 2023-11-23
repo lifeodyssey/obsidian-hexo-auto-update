@@ -1,16 +1,21 @@
 import {App, Notice, PluginSettingTab, Setting} from "obsidian";
 import Index from "../index";
-
-const path = require('path');
+import {SymlinkHandler} from "../symlink";
+import {HexoIntegrationSettings} from "../types";
+require('path');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
 const {dialog} = require('electron').remote;
 
 
 export default class HexoIntegrationSettingsTab extends PluginSettingTab {
-    plugin: Index;
+    private settings: HexoIntegrationSettings;
+    private symlinkHandler: SymlinkHandler;
+    private plugin: Index;
 
-    constructor(app: App, plugin: Index) {
-        super(app, plugin);
-        this.plugin = plugin;
+    constructor(app: App,plugin:Index, settings: HexoIntegrationSettings, symlinkHandler: SymlinkHandler) {
+        super(app,plugin);
+        this.settings = settings;
+        this.symlinkHandler = symlinkHandler;
     }
 
     display(): void {
@@ -51,7 +56,7 @@ export default class HexoIntegrationSettingsTab extends PluginSettingTab {
                         const addingNotice = new Notice("Adding...");
 
                         try {
-                            const status = await this.plugin.c;
+                            const status = await this.symlinkHandler.createSystemSpecificSymlink(this.plugin.settings.hexoSourcePath);
 
                             addingNotice.hide();
 

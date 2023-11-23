@@ -8,11 +8,12 @@ import {SymlinkHandler} from "./symlink";
 export default class HexoIntegrationPlugin extends Plugin {
 	settings: HexoIntegrationSettings;
 	gitHandler: GitHandler;
+	symlinkHandler:SymlinkHandler;
 
 	async onload() {
 
 		await this.loadSettings();
-		this.addSettingTab(new HexoIntegrationSettingsTab(this.app, this));
+		this.addSettingTab(new HexoIntegrationSettingsTab(this.app, this,this.settings,this.symlinkHandler,));
 		const hexoBlogPath = this.settings.hexoSourcePath;
 
 		this.gitHandler = new GitHandler(hexoBlogPath);
@@ -32,32 +33,40 @@ export default class HexoIntegrationPlugin extends Plugin {
 		})
 
 
-		this.addSettingTab(new HexoIntegrationSettingsTab(this.app, this));
+        this.addSettingTab(new HexoIntegrationSettingsTab(this.app, this,this.settings,this.symlinkHandler,));
 		// Get the Hexo blog path from the plugin settings
 		// Initialize the SimpleGit instance with the Hexo blog path
 		// Call the `checkForChanges` function every minute (or any desired interval)
+		this.setAutoSync();
+	}
+
+	private setAutoSync() {
 		setInterval(async () => {
-			const status = await this.gitHandler.checkForChanges();
-			if (status != null) {
-				const changedFilesCount = status.created.length + status.modified.length + status.deleted.length;
+			await this.handleAutoSync();
+		}, 60 * 1000);
+	}
 
-				if (changedFilesCount > 0) {
-					console.log('Changed files:', status.files);
+	private async handleAutoSync() {
+		const status = await this.gitHandler.checkForChanges();
+		if (status != null) {
+			const changedFilesCount = status.created.length + status.modified.length + status.deleted.length;
 
-					// Commit and push the changes
-					try {
-						await this.gitHandler.commitChanges(status);
-						await this.gitHandler.pushChanges();
-						console.log('Changes committed and pushed successfully.');
-						new Notice('Changes committed and pushed successfully.');
+			if (changedFilesCount > 0) {
+				console.log('Changed files:', status.files);
 
-					} catch (error) {
-						console.error('Error during commit and push:', error);
-						throw new Error(`Error during commit and push:${error.message}`);
-					}
+				// Commit and push the changes
+				try {
+					await this.gitHandler.commitChanges(status);
+					await this.gitHandler.pushChanges();
+					console.log('Changes committed and pushed successfully.');
+					new Notice('Changes committed and pushed successfully.');
+
+				} catch (error) {
+					console.error('Error during commit and push:', error);
+					throw new Error(`Error during commit and push:${error.message}`);
 				}
 			}
-		}, 60 * 1000);
+		}
 	}
 
 	onunload() {

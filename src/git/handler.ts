@@ -1,11 +1,11 @@
-import { SimpleGit, StatusResult } from 'simple-git';
+import {simpleGit, SimpleGit, StatusResult} from 'simple-git';
 import {IGitHandler} from "./interface";
 
 export class GitHandler implements IGitHandler{
     private git: SimpleGit;
 
-    constructor(git: SimpleGit) {
-        this.git = git;
+    constructor(repoPath:string) {
+        this.git = simpleGit(repoPath);
     }
 
     public async checkForChanges(): Promise<StatusResult | null> {

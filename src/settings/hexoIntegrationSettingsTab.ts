@@ -51,7 +51,7 @@ export default class HexoIntegrationSettingsTab extends PluginSettingTab {
                         const addingNotice = new Notice("Adding...");
 
                         try {
-                            const status = await this.plugin.createSymlink();
+                            const status = await this.plugin.c;
 
                             addingNotice.hide();
 

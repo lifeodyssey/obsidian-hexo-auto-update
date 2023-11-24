@@ -1,22 +1,24 @@
 import {App, Notice, PluginSettingTab, Setting} from "obsidian";
-import Index from "../index";
 import {SymlinkHandler} from "../symlink";
 import {HexoIntegrationSettings} from "../types";
-require('path');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const {dialog} = require('electron').remote;
+import HexoIntegrationPlugin from "../index";
+import {dialog} from "electron";
+import SettingsManager from "../SettingManager";
+import settingManager from "../SettingManager";
 
 
 export default class HexoIntegrationSettingsTab extends PluginSettingTab {
     private settings: HexoIntegrationSettings;
     private symlinkHandler: SymlinkHandler;
-    private plugin: Index;
+    private settingManager:SettingsManager
 
-    constructor(app: App,plugin:Index, settings: HexoIntegrationSettings, symlinkHandler: SymlinkHandler) {
+    constructor(app: App,plugin:HexoIntegrationPlugin, settings: HexoIntegrationSettings, symlinkHandler: SymlinkHandler, settingsManager: SettingsManager) {
         super(app,plugin);
         this.settings = settings;
         this.symlinkHandler = symlinkHandler;
+        this.settingManager=settingsManager;
     }
+
 
     display(): void {
         const {containerEl} = this;
@@ -40,8 +42,8 @@ export default class HexoIntegrationSettingsTab extends PluginSettingTab {
                             const selectedPath = result.filePaths[0];
                             console.log("Selected Hexo Source Path: " + selectedPath);
 
-                            this.plugin.settings.hexoSourcePath = selectedPath;
-                            await this.plugin.saveSettings();
+                            this.settings.hexoSourcePath = selectedPath;
+                            await this.settingManager.saveSettings();
                             new Notice("Hexo source path set to: " + selectedPath);
                         }
                     });
@@ -50,13 +52,13 @@ export default class HexoIntegrationSettingsTab extends PluginSettingTab {
             button
                 .setButtonText("Add")
                 .onClick(async () => {
-                    if (this.plugin.settings.hexoSourcePath) {
+                    if (this.settings.hexoSourcePath) {
                         addButton.setDisabled(true);
 
                         const addingNotice = new Notice("Adding...");
 
                         try {
-                            const status = await this.symlinkHandler.createSystemSpecificSymlink(this.plugin.settings.hexoSourcePath);
+                            const status = await this.symlinkHandler.createSystemSpecificSymlink(this.settings.hexoSourcePath);
 
                             addingNotice.hide();
 

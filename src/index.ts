@@ -4,16 +4,24 @@ import {DEFAULT_SETTINGS} from "./constants";
 import HexoIntegrationSettingsTab from "./settings/hexoIntegrationSettingsTab";
 import {GitHandler} from "./git";
 import {SymlinkHandler} from "./symlink";
+import SettingsManager from "./SettingManager";
 
 export default class HexoIntegrationPlugin extends Plugin {
+	settingsManager: SettingsManager;
+
 	settings: HexoIntegrationSettings;
+	symlinkHandler: SymlinkHandler;
 	gitHandler: GitHandler;
-	symlinkHandler:SymlinkHandler;
 
 	async onload() {
+		this.settingsManager = new SettingsManager(this);
+		this.symlinkHandler = new SymlinkHandler(this.app);
+		this.gitHandler = new GitHandler(this.settings.hexoSourcePath);
 
 		await this.loadSettings();
-		this.addSettingTab(new HexoIntegrationSettingsTab(this.app, this,this.settings,this.symlinkHandler,));
+
+		this.symlinkHandler = new SymlinkHandler(this.app);
+		this.addSettingTab(new HexoIntegrationSettingsTab(this.app,this, this.settings, this.symlinkHandler, this.settingsManager));
 		const hexoBlogPath = this.settings.hexoSourcePath;
 
 		this.gitHandler = new GitHandler(hexoBlogPath);
@@ -33,7 +41,6 @@ export default class HexoIntegrationPlugin extends Plugin {
 		})
 
 
-        this.addSettingTab(new HexoIntegrationSettingsTab(this.app, this,this.settings,this.symlinkHandler,));
 		// Get the Hexo blog path from the plugin settings
 		// Initialize the SimpleGit instance with the Hexo blog path
 		// Call the `checkForChanges` function every minute (or any desired interval)

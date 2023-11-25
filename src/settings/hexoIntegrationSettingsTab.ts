@@ -12,11 +12,8 @@ export default class HexoIntegrationSettingsTab extends PluginSettingTab {
     private symlinkHandler: SymlinkHandler;
     private settingManager:SettingsManager
 
-    constructor(app: App,plugin:HexoIntegrationPlugin, settings: HexoIntegrationSettings, symlinkHandler: SymlinkHandler, settingsManager: SettingsManager) {
+    constructor(app: App,plugin:HexoIntegrationPlugin) {
         super(app,plugin);
-        this.settings = settings;
-        this.symlinkHandler = symlinkHandler;
-        this.settingManager=settingsManager;
     }
 
 

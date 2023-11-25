@@ -21,7 +21,7 @@ export default class HexoIntegrationPlugin extends Plugin {
 		await this.loadSettings();
 
 		this.symlinkHandler = new SymlinkHandler(this.app);
-		this.addSettingTab(new HexoIntegrationSettingsTab(this.app,this, this.settings, this.symlinkHandler, this.settingsManager));
+		this.addSettingTab(new HexoIntegrationSettingsTab(this.app, this));
 		const hexoBlogPath = this.settings.hexoSourcePath;
 
 		this.gitHandler = new GitHandler(hexoBlogPath);

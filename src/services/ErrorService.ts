@@ -127,7 +127,7 @@ export class ErrorServiceImpl implements ErrorService {
         this.logError(error, context, severity);
         
         // Format user-friendly message
-        let message = typeof error === 'string' ? error : error.message;
+        const message = typeof error === 'string' ? error : error.message;
         
         // Show notification based on severity
         const duration = 

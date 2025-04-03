@@ -21,7 +21,7 @@ export function handleError(
         
         descriptor.value = async function(...args: any[]) {
             try {
-                return await originalMethod.apply(this, args);
+                return await originalMethod.call(this, ...args);
             } catch (error) {
                 const errorService = ErrorServiceImpl.getInstance();
                 errorService.handleError(error, `${context} - ${propertyKey}`, severity);
@@ -58,7 +58,7 @@ export function handleErrorWithRecovery(context: string) {
         
         descriptor.value = async function(...args: any[]) {
             try {
-                return await originalMethod.apply(this, args);
+                return await originalMethod.call(this, ...args);
             } catch (error) {
                 const errorService = ErrorServiceImpl.getInstance();
                 
@@ -66,7 +66,7 @@ export function handleErrorWithRecovery(context: string) {
                 const recovery = async () => {
                     // If the class has a recoveryFor method, use it
                     if (typeof this[`recoveryFor${propertyKey}`] === 'function') {
-                        return await this[`recoveryFor${propertyKey}`].apply(this, args);
+                        return await this[`recoveryFor${propertyKey}`].call(this, ...args);
                     }
                     return null;
                 };

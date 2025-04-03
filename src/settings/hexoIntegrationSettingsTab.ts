@@ -1,5 +1,4 @@
 import {App, Notice, PluginSettingTab, Setting} from "obsidian";
-import {HexoIntegrationSettings} from "../types";
 import HexoIntegrationPlugin from "../index";
 import {dialog} from "electron";
 

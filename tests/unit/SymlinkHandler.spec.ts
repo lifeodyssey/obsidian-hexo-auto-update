@@ -24,10 +24,8 @@ jest.mock("fs");
 jest.mock("symlink-dir");
 
 // Set up fs.promises mock
-fs.promises = {
-  lstat: jest.fn(),
-  readlink: jest.fn()
-} as any;
+jest.spyOn(fs.promises, 'lstat').mockImplementation(jest.fn());
+jest.spyOn(fs.promises, 'readlink').mockImplementation(jest.fn());
 
 /**
  * Create a completely mocked implementation to test the interface contract

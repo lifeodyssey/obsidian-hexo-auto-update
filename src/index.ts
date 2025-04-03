@@ -2,118 +2,116 @@ import {Notice, Plugin} from "obsidian";
 import {HexoIntegrationSettings} from "./types";
 import {DEFAULT_SETTINGS} from "./constants";
 import HexoIntegrationSettingsTab from "./settings/hexoIntegrationSettingsTab";
-import {GitHandler} from "./git";
-import {SymlinkHandler} from "./symlink";
-import SettingsManager from "./SettingManager";
+import { 
+	FileServiceImpl, 
+	GitServiceImpl, 
+	SettingsServiceImpl, 
+	SymlinkServiceImpl, 
+	SyncServiceImpl 
+} from "./services";
+import { 
+	FileService, 
+	GitService, 
+	SettingsService, 
+	SymlinkService, 
+	SyncService 
+} from "./core/interfaces";
 
 export default class HexoIntegrationPlugin extends Plugin {
-	settingsManager: SettingsManager;
+	// Services
+	private settingsService: SettingsService;
+	private fileService: FileService;
+	private symlinkService: SymlinkService;
+	private gitService: GitService;
+	private syncService: SyncService;
 
+	// Settings
 	settings: HexoIntegrationSettings;
-	symlinkHandler: SymlinkHandler;
-	gitHandler: GitHandler;
-	private autoSyncIntervalId: NodeJS.Timeout | null = null;
-
+	
 	async onload() {
-		this.settingsManager = new SettingsManager(this);
+		// Initialize services
+		this.fileService = new FileServiceImpl();
+		this.settingsService = new SettingsServiceImpl(this);
+		
+		// Load settings
 		await this.loadSettings();
-
-		this.symlinkHandler = new SymlinkHandler(this.app);
+		
+		// Initialize other services with dependencies
+		this.symlinkService = new SymlinkServiceImpl(this.app, this.fileService);
+		
+		// Settings tab
 		this.addSettingTab(new HexoIntegrationSettingsTab(this.app, this));
 		
-		// Initialize GitHandler only if hexoSourcePath is defined
+		// Initialize GitService and SyncService only if hexoSourcePath is defined
 		if (this.settings.hexoSourcePath) {
-			const hexoBlogPath = this.settings.hexoSourcePath;
-			this.gitHandler = new GitHandler(hexoBlogPath);
-
-			// Validate symlink
-			try {
-				await this.symlinkHandler.validateSymlink(hexoBlogPath);
-			} catch (error) {
-				console.error("Error validating symlink:", error);
-				new Notice('Error validating symlink to Hexo blog. Please check settings.');
-			}
-
-			// Start auto-sync
-			this.setAutoSync();
+			this.initializeServices(this.settings.hexoSourcePath);
 		} else {
 			new Notice('Please configure the path to your Hexo blog in the settings.');
 		}
 	}
-
-	private setAutoSync() {
-		// Clear any existing interval to prevent memory leaks
-		if (this.autoSyncIntervalId) {
-			clearInterval(this.autoSyncIntervalId);
-			this.autoSyncIntervalId = null;
-		}
-
-		// Set up new interval
-		this.autoSyncIntervalId = setInterval(async () => {
-			await this.handleAutoSync();
-		}, 60 * 1000); // Check every minute
-		
-		console.log('Auto-sync interval set up');
+	
+	/**
+	 * Create a symlink to the Hexo blog
+	 * This method is used by the settings tab
+	 * @param hexoSourcePath Path to the hexo blog source
+	 * @returns Status of the symlink creation
+	 */
+	public async createSymlink(hexoSourcePath: string): Promise<string> {
+		return await this.symlinkService.createSystemSpecificSymlink(hexoSourcePath);
 	}
-
-	private async handleAutoSync() {
+	
+	/**
+	 * Initialize services that require hexoSourcePath
+	 * @param hexoSourcePath Path to the hexo blog source
+	 */
+	private initializeServices(hexoSourcePath: string) {
+		// Initialize Git service
+		this.gitService = new GitServiceImpl(hexoSourcePath, this.fileService);
+		
+		// Initialize Sync service
+		this.syncService = new SyncServiceImpl(this.gitService, this.settingsService);
+		
+		// Validate symlink
+		this.validateSymlink(hexoSourcePath);
+		
+		// Start auto-sync
+		this.syncService.startSync();
+	}
+	
+	/**
+	 * Validate symlink to Hexo blog
+	 * @param hexoSourcePath Path to the hexo blog source
+	 */
+	private async validateSymlink(hexoSourcePath: string) {
 		try {
-			if (!this.gitHandler) {
-				console.log('GitHandler not initialized, skipping auto-sync');
-				return;
-			}
-			
-			const status = await this.gitHandler.checkForChanges();
-			if (status != null) {
-				const changedFilesCount = status.created.length + status.modified.length + status.deleted.length + status.not_added.length;
-
-				if (changedFilesCount > 0) {
-					console.log('Changed files:', status.files);
-
-					// Commit and push the changes
-					try {
-						await this.gitHandler.commitChanges(status);
-						await this.gitHandler.pushChanges();
-						console.log('Changes committed and pushed successfully.');
-						new Notice('Changes committed and pushed successfully.');
-
-					} catch (error) {
-						console.error('Error during commit and push:', error);
-						new Notice(`Error during commit and push: ${error.message}`);
-					}
-				}
-			}
+			await this.symlinkService.validateSymlink(hexoSourcePath);
 		} catch (error) {
-			console.error('Error in auto-sync:', error);
-			new Notice(`Error in auto-sync: ${error.message}`);
+			console.error("Error validating symlink:", error);
+			new Notice('Error validating symlink to Hexo blog. Please check settings.');
 		}
 	}
 
 	onunload() {
-		// Clean up the interval when the plugin is disabled
-		if (this.autoSyncIntervalId) {
-			clearInterval(this.autoSyncIntervalId);
-			this.autoSyncIntervalId = null;
+		// Stop sync when plugin is disabled
+		if (this.syncService) {
+			this.syncService.stopSync();
 		}
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign(
-			{},
-			DEFAULT_SETTINGS,
-			await this.loadData()
-		);
+		// Use settingsService to load settings
+		await this.settingsService.loadSettings();
+		this.settings = this.settingsService.getSettings();
 	}
 
 	async saveSettings() {
-		await this.saveData(this.settings);
+		// Use settingsService to save settings
+		await this.settingsService.saveSettings();
 		
-		// Reinitialize GitHandler with new path if settings changed
+		// Reinitialize services if settings changed and hexoSourcePath is defined
 		if (this.settings.hexoSourcePath) {
-			this.gitHandler = new GitHandler(this.settings.hexoSourcePath);
-			
-			// Restart auto-sync after settings changed
-			this.setAutoSync();
+			this.initializeServices(this.settings.hexoSourcePath);
 		}
 	}
 }
+

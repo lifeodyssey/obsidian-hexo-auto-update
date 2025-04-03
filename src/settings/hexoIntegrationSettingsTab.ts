@@ -1,10 +1,7 @@
 import {App, Notice, PluginSettingTab, Setting} from "obsidian";
-import {SymlinkHandler} from "../symlink";
 import {HexoIntegrationSettings} from "../types";
 import HexoIntegrationPlugin from "../index";
 import {dialog} from "electron";
-import SettingsManager from "../SettingManager";
-import settingManager from "../SettingManager";
 
 // Add type for modern Electron dialog result
 interface ElectronDialogReturnValue {
@@ -13,14 +10,12 @@ interface ElectronDialogReturnValue {
 }
 
 export default class HexoIntegrationSettingsTab extends PluginSettingTab {
-    private settings: HexoIntegrationSettings;
-    private symlinkHandler: SymlinkHandler;
-    private settingManager:SettingsManager
+    private plugin: HexoIntegrationPlugin;
 
-    constructor(app: App,plugin:HexoIntegrationPlugin) {
-        super(app,plugin);
+    constructor(app: App, plugin: HexoIntegrationPlugin) {
+        super(app, plugin);
+        this.plugin = plugin;
     }
-
 
     display(): void {
         const {containerEl} = this;
@@ -58,8 +53,8 @@ export default class HexoIntegrationSettingsTab extends PluginSettingTab {
                             
                             if (selectedPath) {
                                 console.log("Selected Hexo Source Path: " + selectedPath);
-                                this.settings.hexoSourcePath = selectedPath;
-                                await this.settingManager.saveSettings();
+                                this.plugin.settings.hexoSourcePath = selectedPath;
+                                await this.plugin.saveSettings();
                                 new Notice("Hexo source path set to: " + selectedPath);
                             }
                         } catch (error) {
@@ -72,13 +67,14 @@ export default class HexoIntegrationSettingsTab extends PluginSettingTab {
             button
                 .setButtonText("Add")
                 .onClick(async () => {
-                    if (this.settings.hexoSourcePath) {
+                    if (this.plugin.settings.hexoSourcePath) {
                         addButton.setDisabled(true);
 
                         const addingNotice = new Notice("Adding...");
 
                         try {
-                            const status = await this.symlinkHandler.createSystemSpecificSymlink(this.settings.hexoSourcePath);
+                            // Use the symlink service through the plugin
+                            const status = await this.plugin.createSymlink(this.plugin.settings.hexoSourcePath);
 
                             addingNotice.hide();
 

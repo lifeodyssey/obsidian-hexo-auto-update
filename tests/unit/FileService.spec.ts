@@ -71,7 +71,9 @@ describe('FileService', () => {
         it('should add date to front matter if it does not exist', async () => {
             const testPath = '/test/path/post.md';
             const originalContent = '---\ntitle: Test Post\n---\n\nContent';
-            const expectedNewContent = expect.stringMatching(/^---\ndate: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\ntitle: Test Post\n---\n\nContent$/);
+            
+            // Create a regex to match the date format
+            const dateRegex = /^---\ndate: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\ntitle: Test Post\n---\n\nContent$/;
             
             (fs.readFileSync as jest.Mock).mockReturnValue(originalContent);
             
@@ -79,7 +81,11 @@ describe('FileService', () => {
             
             expect(fs.readFileSync).toHaveBeenCalledWith(testPath, 'utf-8');
             expect(fs.writeFileSync).toHaveBeenCalledWith(testPath, expect.any(String), 'utf-8');
-            expect((fs.writeFileSync as jest.Mock).mock.calls[0][1]).toMatch(expectedNewContent);
+            
+            // Get the actual content that was written
+            const newContent = (fs.writeFileSync as jest.Mock).mock.calls[0][1];
+            expect(typeof newContent).toBe('string');
+            expect(newContent).toMatch(dateRegex);
         });
         
         it('should not modify front matter if date already exists', async () => {
@@ -97,7 +103,9 @@ describe('FileService', () => {
         it('should add front matter with date if no front matter exists', async () => {
             const testPath = '/test/path/post.md';
             const originalContent = 'Content without front matter';
-            const expectedNewContent = expect.stringMatching(/^---\ndate: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\n---\n\nContent without front matter$/);
+            
+            // Create a regex to match the date format
+            const dateRegex = /^---\ndate: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\n---\n\nContent without front matter$/;
             
             (fs.readFileSync as jest.Mock).mockReturnValue(originalContent);
             
@@ -105,7 +113,11 @@ describe('FileService', () => {
             
             expect(fs.readFileSync).toHaveBeenCalledWith(testPath, 'utf-8');
             expect(fs.writeFileSync).toHaveBeenCalledWith(testPath, expect.any(String), 'utf-8');
-            expect((fs.writeFileSync as jest.Mock).mock.calls[0][1]).toMatch(expectedNewContent);
+            
+            // Get the actual content that was written
+            const newContent = (fs.writeFileSync as jest.Mock).mock.calls[0][1];
+            expect(typeof newContent).toBe('string');
+            expect(newContent).toMatch(dateRegex);
         });
         
         it('should handle errors gracefully', async () => {

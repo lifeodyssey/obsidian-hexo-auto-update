@@ -8,49 +8,60 @@ This directory contains tests for the Obsidian-Hexo Integration Plugin.
   - `obsidian.ts`: Mocks for Obsidian API
   - `electron.ts`: Mocks for Electron API
 - `unit/`: Unit tests for individual components
+  - `FileService.spec.ts`: Tests for file system operations
   - `GitHandler.spec.ts`: Tests for Git functionality
   - `SettingsManager.spec.ts`: Tests for settings management
-  - `SymlinkHandler.spec.ts`: Placeholder tests for symlink functionality
-  - `HexoIntegrationPlugin.spec.ts`: Placeholder tests for the main plugin
+  - `SymlinkHandler.spec.ts`: Tests for symlink functionality
+  - `SyncService.spec.ts`: Tests for synchronization service
+  - `HexoIntegrationPlugin.spec.ts`: Tests for the main plugin
+- `integration/`: Integration tests for component interactions
+  - `serviceIntegration.spec.ts`: Tests for interactions between services
 
 ## Current Status
 
+- ✅ `FileService` tests: Fully implemented
 - ✅ `GitHandler` tests: Fully implemented
 - ✅ `SettingsManager` tests: Fully implemented
-- 🚧 `SymlinkHandler` tests: Placeholder only (needs implementation)
-- 🚧 `HexoIntegrationPlugin` tests: Placeholder only (needs implementation)
+- ✅ `SymlinkHandler` tests: Fully implemented
+- ✅ `SyncService` tests: Fully implemented 
+- ✅ `HexoIntegrationPlugin` tests: Fully implemented
+- ✅ Integration tests: Basic service interactions covered
 
-## Test Implementation Plan
+## Testing Approach
 
-### 1. SymlinkHandler Tests
+The testing approach follows best practices for unit and integration testing:
 
-The `SymlinkHandler` tests need to properly mock:
-- OS detection via `os.platform()`
-- File system operations via `fs` module
-- The `symlink-dir` module
+### Unit Tests
 
-Initial attempts encountered issues with mocking these dependencies correctly. The plan is to:
-1. Improve mock implementations for these modules
-2. Use Jest's manual mocking capabilities to provide better control
-3. Implement tests for all the key methods
+Unit tests focus on individual components and follow these principles:
+- Isolation of the component under test using dependency mocking
+- Testing of all public methods and key behaviors
+- Coverage of error handling and edge cases
+- Clear test organization by method or feature
 
-### 2. HexoIntegrationPlugin Tests
+### Integration Tests
 
-The main plugin class tests need to properly mock:
-- Obsidian API
-- The timer functionality for auto-sync
-- Dependency injection for GitHandler and SymlinkHandler
+Integration tests verify that components work together correctly:
+- Testing of interactions between services
+- Verification of correct data flow between components
+- Testing of error propagation between components
+- Focus on realistic usage scenarios
 
-### 3. Integration Tests
+## Mocking Strategy
 
-Once unit tests are complete, we'll add integration tests that verify how components work together.
+We implement proper mocking strategies to isolate components:
 
-## Mock Usage
+1. **Direct Dependencies**: Using Jest's mocking capabilities to mock direct dependencies
+   - Example: `jest.mock('obsidian')` to mock Obsidian API
 
-The mocks directory contains implementations for external dependencies:
+2. **Interface-Based Mocking**: Creating mock implementations of interfaces
+   - Example: Creating mock implementations of `FileService`, `GitService`, etc.
 
-- `obsidian.ts`: Provides mock implementations of Obsidian's API classes like `App`, `Plugin`, `Notice`, etc.
-- `electron.ts`: Provides mock implementations of Electron's `dialog`, `app`, and `shell` APIs.
+3. **Global Objects**: Mocking global objects when needed
+   - Example: Mocking `setInterval` and `clearInterval` for timer-based functionality
+
+4. **Contextual Mocking**: Providing different mock behaviors based on test context
+   - Example: Mocking file system differently based on OS
 
 ## Running Tests
 
@@ -66,16 +77,48 @@ To run tests with a specific pattern:
 npm test -- -t "GitHandler"
 ```
 
-## Contributing Tests
+To run tests with coverage report:
 
-When implementing the missing tests, please follow the patterns established in the existing tests:
+```bash
+npm test -- --coverage
+```
 
-1. Mock dependencies at the top of the file
-2. Use descriptive test names that explain what's being tested
-3. Organize tests into `describe` blocks by method or feature
-4. Follow the "Setup, Execute, Verify" pattern in test cases
+## Coverage Goals
+
+The current jest.config.ts includes coverage thresholds:
+- 40% for branches, functions, lines, and statements as a minimum
+
+Goals for future improvements:
+- Reach 80% coverage for critical components
+- Ensure error handling paths are tested
+- Cover platform-specific behaviors
+
+## Best Practices
+
+When maintaining or adding tests, follow these guidelines:
+
+1. **Test Naming**: Use descriptive names that explain what's being tested
+   - Example: `should commit and push changes when changes are detected`
+
+2. **AAA Pattern**: Follow Arrange-Act-Assert pattern in test cases
+   - Arrange: Set up test data and mocks
+   - Act: Call the method being tested
+   - Assert: Verify the results
+
+3. **Focused Assertions**: Make specific assertions that verify expected behavior
+   - Example: Assert that specific methods are called with specific parameters
+
+4. **Isolation**: Ensure tests are isolated and don't depend on each other
+   - Reset mocks between tests
+   - Don't share state between tests
+
+## Mock Usage
+
+The mocks directory contains implementations for external dependencies:
+
+- `obsidian.ts`: Provides mock implementations of Obsidian's API classes like `App`, `Plugin`, `Notice`, etc.
+- `electron.ts`: Provides mock implementations of Electron's `dialog`, `app`, and `shell` APIs.
 
 ## Known Issues
 
-1. The `SymlinkHandler` tests have been challenging due to the difficulty of properly mocking OS-specific behavior and the symlink-dir module.
-2. Testing the main plugin class is complex due to its interactions with the Obsidian API and interval timers. 
+1. The `SymlinkHandler`

@@ -15,7 +15,7 @@ export class SymlinkHandler implements ISymlinkHandler {
 
     public async createSystemSpecificSymlink(hexoSourcePath: string): Promise<string> {
         try {
-            const vaultPath = (app.vault.adapter as FileSystemAdapter).getBasePath();
+            const vaultPath = (this.app.vault.adapter as FileSystemAdapter).getBasePath();
             const isWindows = os.platform() === 'win32';
             const targetFolder = isWindows ? 'Win Blog' : 'Mac Blog';
             const newFolderPath = path.join(vaultPath, targetFolder);
@@ -58,7 +58,7 @@ export class SymlinkHandler implements ISymlinkHandler {
     }
 
     public async validateSymlink(hexoSourcePath: string): Promise<void> {
-        const vaultPath = (app.vault.adapter as FileSystemAdapter).getBasePath();
+        const vaultPath = (this.app.vault.adapter as FileSystemAdapter).getBasePath();
         const isWindows = os.platform() === 'win32';
         const targetFolder = isWindows ? 'Win Blog' : 'Mac Blog';
         const newFolderPath = path.join(vaultPath, targetFolder);

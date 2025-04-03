@@ -6,6 +6,11 @@ import {dialog} from "electron";
 import SettingsManager from "../SettingManager";
 import settingManager from "../SettingManager";
 
+// Add type for modern Electron dialog result
+interface ElectronDialogReturnValue {
+    canceled: boolean;
+    filePaths: string[];
+}
 
 export default class HexoIntegrationSettingsTab extends PluginSettingTab {
     private settings: HexoIntegrationSettings;
@@ -32,16 +37,34 @@ export default class HexoIntegrationSettingsTab extends PluginSettingTab {
             .addButton(button => {
                 button.setButtonText("Select Folder")
                     .onClick(async () => {
-                        const result = await dialog.showOpenDialog({
-                            properties: ['openDirectory']
-                        });
-                        if (!result.canceled && result.filePaths.length > 0) {
-                            const selectedPath = result.filePaths[0];
-                            console.log("Selected Hexo Source Path: " + selectedPath);
-
-                            this.settings.hexoSourcePath = selectedPath;
-                            await this.settingManager.saveSettings();
-                            new Notice("Hexo source path set to: " + selectedPath);
+                        try {
+                            const result = await dialog.showOpenDialog({
+                                properties: ['openDirectory']
+                            });
+                            
+                            let selectedPath: string | undefined;
+                            
+                            // Handle result based on type
+                            if (Array.isArray(result)) {
+                                // Old API returns string[]
+                                selectedPath = result.length > 0 ? result[0] : undefined;
+                            } else {
+                                // New API returns {canceled, filePaths}
+                                const modernResult = result as unknown as ElectronDialogReturnValue;
+                                if (!modernResult.canceled && modernResult.filePaths?.length > 0) {
+                                    selectedPath = modernResult.filePaths[0];
+                                }
+                            }
+                            
+                            if (selectedPath) {
+                                console.log("Selected Hexo Source Path: " + selectedPath);
+                                this.settings.hexoSourcePath = selectedPath;
+                                await this.settingManager.saveSettings();
+                                new Notice("Hexo source path set to: " + selectedPath);
+                            }
+                        } catch (error) {
+                            console.error("Error selecting folder:", error);
+                            new Notice("Error selecting folder: " + error.message);
                         }
                     });
             })

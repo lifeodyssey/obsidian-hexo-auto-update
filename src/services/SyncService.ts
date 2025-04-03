@@ -2,6 +2,7 @@ import { Notice } from "obsidian";
 import { SyncService } from "../core/interfaces/SyncService";
 import { GitService } from "../core/interfaces/GitService";
 import { SettingsService } from "../core/interfaces/SettingsService";
+import { ErrorService, ErrorSeverity } from "../core/interfaces/ErrorService";
 
 /**
  * Implementation of SyncService that handles automated synchronization
@@ -9,42 +10,78 @@ import { SettingsService } from "../core/interfaces/SettingsService";
 export class SyncServiceImpl implements SyncService {
     private gitService: GitService;
     private settingsService: SettingsService;
+    private errorService: ErrorService;
     private autoSyncIntervalId: NodeJS.Timeout | null = null;
     private readonly syncIntervalMs: number = 60 * 1000; // 1 minute
+    private consecutiveFailures: number = 0;
+    private readonly maxConsecutiveFailures: number = 5;
 
     /**
      * Constructor for SyncServiceImpl
      * @param gitService Service for Git operations
      * @param settingsService Service for settings management
+     * @param errorService Service for error handling
      */
-    constructor(gitService: GitService, settingsService: SettingsService) {
+    constructor(
+        gitService: GitService, 
+        settingsService: SettingsService,
+        errorService: ErrorService
+    ) {
         this.gitService = gitService;
         this.settingsService = settingsService;
+        this.errorService = errorService;
     }
 
     /**
      * Start monitoring for changes and syncing
      */
     public startSync(): void {
-        // Clear any existing interval to prevent memory leaks
-        this.stopSync();
+        try {
+            // Clear any existing interval to prevent memory leaks
+            this.stopSync();
 
-        // Set up new interval
-        this.autoSyncIntervalId = setInterval(async () => {
-            await this.handleSync();
-        }, this.syncIntervalMs);
-        
-        console.log('Auto-sync started with interval:', this.syncIntervalMs, 'ms');
+            // Reset failure counter when starting sync
+            this.consecutiveFailures = 0;
+
+            // Set up new interval
+            this.autoSyncIntervalId = setInterval(async () => {
+                await this.handleSync();
+            }, this.syncIntervalMs);
+            
+            this.errorService.logError(
+                'Auto-sync started with interval: ' + this.syncIntervalMs + 'ms', 
+                'SyncService', 
+                ErrorSeverity.INFO
+            );
+        } catch (error) {
+            this.errorService.handleError(
+                error, 
+                'Starting Sync', 
+                ErrorSeverity.ERROR
+            );
+        }
     }
 
     /**
      * Stop monitoring for changes
      */
     public stopSync(): void {
-        if (this.autoSyncIntervalId) {
-            clearInterval(this.autoSyncIntervalId);
-            this.autoSyncIntervalId = null;
-            console.log('Auto-sync stopped');
+        try {
+            if (this.autoSyncIntervalId) {
+                clearInterval(this.autoSyncIntervalId);
+                this.autoSyncIntervalId = null;
+                this.errorService.logError(
+                    'Auto-sync stopped', 
+                    'SyncService', 
+                    ErrorSeverity.INFO
+                );
+            }
+        } catch (error) {
+            this.errorService.handleError(
+                error, 
+                'Stopping Sync', 
+                ErrorSeverity.WARNING
+            );
         }
     }
 
@@ -62,24 +99,77 @@ export class SyncServiceImpl implements SyncService {
                     status.not_added.length;
 
                 if (changedFilesCount > 0) {
-                    console.log('Changed files:', status.files);
+                    this.errorService.logError(
+                        'Changed files: ' + JSON.stringify(status.files), 
+                        'SyncService', 
+                        ErrorSeverity.INFO
+                    );
 
                     // Commit and push the changes
                     try {
                         await this.gitService.commitChanges(status);
                         await this.gitService.pushChanges();
-                        console.log('Changes committed and pushed successfully.');
+                        
+                        // Reset failure counter on success
+                        this.consecutiveFailures = 0;
+                        
+                        this.errorService.logError(
+                            'Changes committed and pushed successfully.', 
+                            'SyncService', 
+                            ErrorSeverity.INFO
+                        );
                         new Notice('Changes committed and pushed successfully.');
 
                     } catch (error) {
-                        console.error('Error during commit and push:', error);
-                        new Notice(`Error during commit and push: ${error.message}`);
+                        // Increment failure counter
+                        this.consecutiveFailures++;
+                        
+                        // Handle error with recovery mechanism
+                        await this.errorService.handleErrorWithRecovery(
+                            error, 
+                            'Commit and Push',
+                            async () => {
+                                if (this.consecutiveFailures < this.maxConsecutiveFailures) {
+                                    // Wait and retry
+                                    await new Promise(resolve => setTimeout(resolve, 5000));
+                                    
+                                    // Try commit again
+                                    await this.gitService.commitChanges(status);
+                                    await this.gitService.pushChanges();
+                                    return true;
+                                } else {
+                                    // Too many failures, pause sync
+                                    this.stopSync();
+                                    new Notice(
+                                        'Auto-sync has been paused due to multiple failures. ' +
+                                        'Please check your Hexo blog configuration and restart the plugin.'
+                                    );
+                                    return false;
+                                }
+                            }
+                        );
                     }
                 }
             }
         } catch (error) {
-            console.error('Error in auto-sync:', error);
-            new Notice(`Error in auto-sync: ${error.message}`);
+            // Increment failure counter
+            this.consecutiveFailures++;
+            
+            await this.errorService.handleErrorWithRecovery(
+                error, 
+                'Auto-Sync Process',
+                async () => {
+                    if (this.consecutiveFailures >= this.maxConsecutiveFailures) {
+                        // Too many consecutive failures, pause sync
+                        this.stopSync();
+                        new Notice(
+                            'Auto-sync has been paused due to multiple failures. ' +
+                            'Please check your Hexo blog configuration and restart the plugin.'
+                        );
+                    }
+                    return false;
+                }
+            );
         }
     }
 } 

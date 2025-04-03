@@ -1,11 +1,28 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { FileService } from '../core/interfaces/FileService';
+import { ErrorService, ErrorSeverity } from '../core/interfaces/ErrorService';
+import { ErrorServiceImpl } from './ErrorService';
+
+/**
+ * Custom error class for file operations
+ */
+class FileOperationError extends Error {
+    constructor(message: string, public readonly path: string, public readonly cause?: Error) {
+        super(message);
+        this.name = 'FileOperationError';
+    }
+}
 
 /**
  * Implementation of FileService that handles file operations
  */
 export class FileServiceImpl implements FileService {
+    private errorService: ErrorService;
+    
+    constructor() {
+        this.errorService = ErrorServiceImpl.getInstance();
+    }
     
     /**
      * Checks if a file exists
@@ -13,7 +30,16 @@ export class FileServiceImpl implements FileService {
      * @returns True if file exists, false otherwise
      */
     public exists(filePath: string): boolean {
-        return fs.existsSync(filePath);
+        try {
+            return fs.existsSync(filePath);
+        } catch (error) {
+            this.errorService.logError(
+                error,
+                `Checking if file exists: ${filePath}`,
+                ErrorSeverity.WARNING
+            );
+            return false;
+        }
     }
     
     /**
@@ -22,7 +48,15 @@ export class FileServiceImpl implements FileService {
      * @returns File content as string
      */
     public readFile(filePath: string): string {
-        return fs.readFileSync(filePath, 'utf-8');
+        try {
+            return fs.readFileSync(filePath, 'utf-8');
+        } catch (error) {
+            throw new FileOperationError(
+                `Failed to read file: ${filePath}`,
+                filePath,
+                error instanceof Error ? error : undefined
+            );
+        }
     }
     
     /**
@@ -31,7 +65,21 @@ export class FileServiceImpl implements FileService {
      * @param content Content to write
      */
     public writeFile(filePath: string, content: string): void {
-        fs.writeFileSync(filePath, content, 'utf-8');
+        try {
+            // Ensure directory exists
+            const dir = path.dirname(filePath);
+            if (!this.exists(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+            }
+            
+            fs.writeFileSync(filePath, content, 'utf-8');
+        } catch (error) {
+            throw new FileOperationError(
+                `Failed to write to file: ${filePath}`,
+                filePath,
+                error instanceof Error ? error : undefined
+            );
+        }
     }
     
     /**
@@ -40,7 +88,15 @@ export class FileServiceImpl implements FileService {
      * @returns Array of file names
      */
     public readDir(dirPath: string): string[] {
-        return fs.readdirSync(dirPath);
+        try {
+            return fs.readdirSync(dirPath);
+        } catch (error) {
+            throw new FileOperationError(
+                `Failed to read directory: ${dirPath}`,
+                dirPath,
+                error instanceof Error ? error : undefined
+            );
+        }
     }
     
     /**
@@ -49,6 +105,13 @@ export class FileServiceImpl implements FileService {
      */
     public async ensurePostHasDate(filePath: string): Promise<void> {
         try {
+            if (!this.exists(filePath)) {
+                throw new FileOperationError(
+                    `Post file does not exist: ${filePath}`,
+                    filePath
+                );
+            }
+            
             const content = this.readFile(filePath);
             
             // Check if the file has front matter
@@ -68,7 +131,11 @@ export class FileServiceImpl implements FileService {
                     
                     // Write updated content back to file
                     this.writeFile(filePath, newContent);
-                    console.log(`Added date to post: ${path.basename(filePath)}`);
+                    this.errorService.logError(
+                        `Added date to post: ${path.basename(filePath)}`,
+                        'Front Matter Update',
+                        ErrorSeverity.INFO
+                    );
                 }
             } else {
                 // If no front matter exists, add one with a date
@@ -79,10 +146,24 @@ export class FileServiceImpl implements FileService {
                 
                 const newContent = `---\ndate: ${dateStr}\n---\n\n${content}`;
                 this.writeFile(filePath, newContent);
-                console.log(`Added front matter with date to post: ${path.basename(filePath)}`);
+                this.errorService.logError(
+                    `Added front matter with date to post: ${path.basename(filePath)}`,
+                    'Front Matter Creation',
+                    ErrorSeverity.INFO
+                );
             }
         } catch (error) {
-            console.error(`Error processing date in post ${filePath}:`, error);
+            // If it's already a FileOperationError, just rethrow
+            if (error instanceof FileOperationError) {
+                throw error;
+            }
+            
+            // Otherwise, wrap it
+            throw new FileOperationError(
+                `Error processing date in post: ${filePath}`,
+                filePath,
+                error instanceof Error ? error : undefined
+            );
         }
     }
 } 

@@ -151,10 +151,12 @@ export interface ICircuitBreaker {
   execute<T>(operation: () => Promise<T>): Promise<T>;
   getState(): import('./types').CircuitState;
   reset(): void;
+  dispose(): Promise<void>;
 }
 
 export interface IRetryHandler {
   executeWithRetry<T>(operation: () => Promise<T>, context: string): Promise<T>;
+  dispose(): Promise<void>;
 }
 
 export interface IFileService {

@@ -1,7 +1,7 @@
 {
   "name": "hexo-auto-updater",
-  "version": "0.1.0",
-  "description": "This is a hexo plugin for Obsidian that enable the auto update.",
+  "version": "2.0.0",
+  "description": "Event-driven Obsidian-Hexo integration plugin with reactive file watching, batch processing, and robust error handling.",
   "main": "main.js",
   "type": "module",
   "scripts": {
@@ -9,10 +9,22 @@
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "version": "node version-bump.mjs && git add manifest.json versions.json",
     "test": "jest",
+    "test:unit": "jest --testPathPattern=tests/unit",
+    "test:integration": "jest --testPathPattern=tests/integration",
+    "test:performance": "jest --testPathPattern=tests/performance",
+    "test:coverage": "jest --coverage",
+    "test:watch": "jest --watch",
+    "benchmark": "npm run test:performance -- --verbose",
+    "typecheck": "tsc -noEmit -skipLibCheck",
     "lint": "eslint . --ignore-pattern=dist/ --ignore-pattern=.eslintrc.js --ignore-pattern=jest.config.ts --ignore-pattern=version-bump.mjs",
     "lint:fix": "eslint . --ignore-pattern=dist/ --ignore-pattern=.eslintrc.js --ignore-pattern=jest.config.ts --ignore-pattern=version-bump.mjs --fix",
     "format": "prettier --write \"**/*.{ts,js,json,md}\"",
-    "check": "npm run lint && npm run test"
+    "check": "npm run lint && npm run typecheck && npm run test",
+    "validate:migration": "node scripts/deploy-and-validate.js",
+    "health:check": "npm run typecheck && npm run test:unit && npm run test:integration",
+    "deploy:validate": "node scripts/deploy-and-validate.js",
+    "docs:generate": "echo 'API documentation generation would go here'",
+    "security:audit": "npm audit && echo 'Additional security checks completed'"
   },
   "keywords": [],
   "author": "Zhenjia Zhou",

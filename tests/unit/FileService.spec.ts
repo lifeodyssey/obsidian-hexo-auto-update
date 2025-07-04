@@ -130,10 +130,9 @@ describe('FileService', () => {
             
             console.error = jest.fn();
             
-            await fileService.ensurePostHasDate(testPath);
+            await expect(fileService.ensurePostHasDate(testPath)).rejects.toThrow('Failed to read file');
             
             expect(fs.readFileSync).toHaveBeenCalledWith(testPath, 'utf-8');
-            expect(console.error).toHaveBeenCalledWith(`Error processing date in post ${testPath}:`, error);
         });
     });
 }); 

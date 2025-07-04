@@ -1,8 +1,10 @@
-import { simpleGit, SimpleGit, StatusResult } from 'simple-git';
+import { simpleGit, SimpleGit } from 'simple-git';
+import type { StatusResult } from 'simple-git';
 import * as path from 'path';
 import { GitService } from '../core/interfaces/GitService';
 import { FileService } from '../core/interfaces/FileService';
-import { ErrorService, ErrorSeverity } from '../core/interfaces/ErrorService';
+import type { ErrorService } from '../core/interfaces/ErrorService';
+import { ErrorSeverity } from '../core/interfaces/ErrorService';
 import { ErrorServiceImpl } from './ErrorService';
 import { handleError } from '../core/decorators';
 

@@ -15,8 +15,17 @@ export function handleError(
     return function (
         target: any,
         propertyKey: string,
-        descriptor: PropertyDescriptor
+        descriptor?: PropertyDescriptor
     ) {
+        if (!descriptor) {
+            // Handle case where descriptor is not provided (newer TypeScript versions)
+            descriptor = Object.getOwnPropertyDescriptor(target, propertyKey) || 
+                        Object.getOwnPropertyDescriptor(target.constructor.prototype, propertyKey);
+        }
+        if (!descriptor || !descriptor.value) {
+            console.warn(`@handleError decorator: could not find method ${propertyKey} on ${target.constructor.name}`);
+            return descriptor;
+        }
         const originalMethod = descriptor.value;
         
         descriptor.value = async function(...args: any[]) {
@@ -52,8 +61,17 @@ export function handleErrorWithRecovery(context: string) {
     return function (
         target: any,
         propertyKey: string,
-        descriptor: PropertyDescriptor
+        descriptor?: PropertyDescriptor
     ) {
+        if (!descriptor) {
+            // Handle case where descriptor is not provided (newer TypeScript versions)
+            descriptor = Object.getOwnPropertyDescriptor(target, propertyKey) || 
+                        Object.getOwnPropertyDescriptor(target.constructor.prototype, propertyKey);
+        }
+        if (!descriptor || !descriptor.value) {
+            console.warn(`@handleErrorWithRecovery decorator: could not find method ${propertyKey} on ${target.constructor.name}`);
+            return descriptor;
+        }
         const originalMethod = descriptor.value;
         
         descriptor.value = async function(...args: any[]) {

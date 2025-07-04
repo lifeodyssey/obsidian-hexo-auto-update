@@ -6,10 +6,30 @@
 # Datasource local storage ignored files
 /dataSources/
 /dataSources.local.xml
+
+# Dependencies
 /node_modules/
-/coverage
-/dist
-.idea
 package-lock.json
-```
+
+# Build outputs
+/coverage/
+/dist/
+
+# IDE files
+.idea/
+.vscode/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Claude and AI tools
+.claude/
+.roomodes
+claude-flow
+prompt.md
+
+# Temporary files
+*.tmp
+*.log
 

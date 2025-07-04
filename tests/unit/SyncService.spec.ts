@@ -2,6 +2,7 @@ import { Notice } from "obsidian";
 import { SyncServiceImpl } from "../../src/services/SyncService";
 import { GitService } from "../../src/core/interfaces/GitService";
 import { SettingsService } from "../../src/core/interfaces/SettingsService";
+import { ErrorService } from "../../src/core/interfaces/ErrorService";
 import { StatusResult } from "simple-git";
 
 // Mock the dependencies
@@ -40,6 +41,7 @@ describe("SyncService", () => {
   let syncService: SyncServiceImpl;
   let mockGitService: jest.Mocked<GitService>;
   let mockSettingsService: jest.Mocked<SettingsService>;
+  let mockErrorService: jest.Mocked<ErrorService>;
   
   // Mock for console methods
   const originalConsoleLog = console.log;
@@ -58,8 +60,17 @@ describe("SyncService", () => {
     
     mockSettingsService = {} as jest.Mocked<SettingsService>;
     
+    mockErrorService = {
+      handleError: jest.fn(),
+      handleErrorWithRecovery: jest.fn(),
+      logError: jest.fn(),
+      logWarning: jest.fn(),
+      logInfo: jest.fn(),
+      getErrorLog: jest.fn()
+    } as jest.Mocked<ErrorService>;
+    
     // Create the service instance
-    syncService = new SyncServiceImpl(mockGitService, mockSettingsService);
+    syncService = new SyncServiceImpl(mockGitService, mockSettingsService, mockErrorService);
     
     // Mock console methods to avoid test output pollution
     console.log = jest.fn();
@@ -77,10 +88,10 @@ describe("SyncService", () => {
       syncService.startSync();
       
       expect(global.setInterval).toHaveBeenCalled();
-      expect(console.log).toHaveBeenCalledWith(
-        "Auto-sync started with interval:",
-        expect.any(Number),
-        "ms"
+      expect(mockErrorService.logError).toHaveBeenCalledWith(
+        expect.stringContaining("Auto-sync started with interval:"),
+        "SyncService",
+        expect.any(String)
       );
     });
     
@@ -113,7 +124,11 @@ describe("SyncService", () => {
       syncService.stopSync();
       
       expect(global.clearInterval).toHaveBeenCalled();
-      expect(console.log).toHaveBeenCalledWith("Auto-sync stopped");
+      expect(mockErrorService.logError).toHaveBeenCalledWith(
+        "Auto-sync stopped",
+        "SyncService",
+        expect.any(String)
+      );
     });
     
     it("should not call clearInterval if no interval is set", () => {
@@ -141,6 +156,7 @@ describe("SyncService", () => {
         behind: 0,
         current: "main",
         tracking: "origin/main",
+        detached: false,
         files: [
           { path: "file1.md", index: "?", working_dir: "?" },
           { path: "file2.md", index: "M", working_dir: "M" }
@@ -176,6 +192,7 @@ describe("SyncService", () => {
         behind: 0,
         current: "main",
         tracking: "origin/main",
+        detached: false,
         files: [],
         renamed: [],
         isClean: jest.fn().mockReturnValue(true)
@@ -214,6 +231,7 @@ describe("SyncService", () => {
         behind: 0,
         current: "main",
         tracking: "origin/main",
+        detached: false,
         files: [{ path: "file1.md", index: "A", working_dir: "?" }],
         renamed: [],
         isClean: jest.fn().mockReturnValue(false)
@@ -225,11 +243,12 @@ describe("SyncService", () => {
       
       await syncService.handleSync();
       
-      // Should show an error notice
-      expect(Notice).toHaveBeenCalledWith(
-        expect.stringContaining("Error during commit and push")
+      // Should handle error with recovery
+      expect(mockErrorService.handleErrorWithRecovery).toHaveBeenCalledWith(
+        expect.any(Error),
+        "Commit and Push",
+        expect.any(Function)
       );
-      expect(console.error).toHaveBeenCalled();
       
       // Should call commitChanges but not pushChanges
       expect(mockGitService.commitChanges).toHaveBeenCalled();
@@ -242,11 +261,12 @@ describe("SyncService", () => {
       
       await syncService.handleSync();
       
-      // Should show an error notice
-      expect(Notice).toHaveBeenCalledWith(
-        expect.stringContaining("Error in auto-sync")
+      // Should handle error with recovery
+      expect(mockErrorService.handleErrorWithRecovery).toHaveBeenCalledWith(
+        expect.any(Error),
+        "Auto-Sync Process",
+        expect.any(Function)
       );
-      expect(console.error).toHaveBeenCalled();
       
       // Should not attempt any git operations
       expect(mockGitService.commitChanges).not.toHaveBeenCalled();

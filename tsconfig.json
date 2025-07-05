@@ -23,6 +23,13 @@
   },
   "include": [
     "**/*.ts"
-  ]
-//	"exclude": ["node_modules", "**/*.test.ts"]
+  ],
+	"exclude": [
+		"node_modules", 
+		"**/*.test.ts",
+		"**/*.spec.ts",
+		"src/HexoIntegrationPluginV2.ts",
+		"src/migration/**",
+		"tests/**"
+	]
 }

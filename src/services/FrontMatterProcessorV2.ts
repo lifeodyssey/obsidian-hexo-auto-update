@@ -17,7 +17,7 @@ export interface FrontMatterData {
     slug?: string;
     excerpt?: string;
     draft?: boolean;
-    [key: string]: any;
+    [key: string]: string | string[] | Date | boolean | number | undefined;
 }
 
 export interface ProcessingOptions {

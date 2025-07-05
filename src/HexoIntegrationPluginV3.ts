@@ -1,10 +1,10 @@
-import { Notice, Plugin, TFile } from "obsidian";
+import { Notice, Plugin } from "obsidian";
 import path from "path";
 
 // Modern services
 import { SymlinkServiceV2 } from "./services/SymlinkServiceV2";
-import { FileWatcherV2, FileChangeEvent, createHexoPostsWatcher } from "./services/FileWatcherV2";
-import { FileScannerV2, createHexoPostsScanner } from "./services/FileScannerV2";
+import { FileWatcherV2, FileChangeEvent } from "./services/FileWatcherV2";
+import { FileScannerV2 } from "./services/FileScannerV2";
 import { FrontMatterProcessorV2, createHexoFrontMatterProcessor } from "./services/FrontMatterProcessorV2";
 
 // Legacy compatibility
@@ -101,8 +101,8 @@ export default class HexoIntegrationPluginV3 extends Plugin {
         
         // Initialize front-matter processor
         this.frontMatterProcessor = createHexoFrontMatterProcessor({
-            autoAddDate: this.settings.autoAddDate ?? true,
-            autoGenerateTitle: this.settings.autoGenerateTitle ?? true,
+            autoAddDate: this.settings.autoAddDate,
+            autoGenerateTitle: this.settings.autoGenerateTitle,
             requiredFields: ['title', 'date']
         });
         
@@ -125,7 +125,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
             await this.initializeGitOperations();
             
             // Step 3: Initialize file scanner
-            this.fileScanner = createHexoPostsScanner(this.settings.hexoSourcePath);
+            this.fileScanner = new FileScannerV2(this.settings.hexoSourcePath);
             
             // Step 4: Perform initial scan and cleanup
             await this.performInitialScan();
@@ -552,6 +552,9 @@ export default class HexoIntegrationPluginV3 extends Plugin {
     }
 
     async saveSettings(): Promise<void> {
+        // Validate settings before saving
+        this.validateSettings(this.settings);
+        
         await this.saveData(this.settings);
         
         // Reinitialize if needed
@@ -561,6 +564,37 @@ export default class HexoIntegrationPluginV3 extends Plugin {
             } catch (error) {
                 console.error('Failed to reinitialize after settings change:', error);
             }
+        }
+    }
+
+    /**
+     * Validate plugin settings
+     * @param settings Settings to validate
+     */
+    private validateSettings(settings: HexoIntegrationSettings): void {
+        if (settings.hexoSourcePath && settings.hexoSourcePath.trim() === '') {
+            throw new Error('Hexo source path cannot be empty');
+        }
+        
+        if (settings.hexoSourcePath && !settings.hexoSourcePath.startsWith('/')) {
+            throw new Error('Hexo source path must be an absolute path');
+        }
+        
+        // Validate boolean settings are proper booleans
+        if (typeof settings.autoSync !== 'boolean') {
+            throw new Error('autoSync must be a boolean value');
+        }
+        if (typeof settings.autoCommit !== 'boolean') {
+            throw new Error('autoCommit must be a boolean value');
+        }
+        if (typeof settings.autoPush !== 'boolean') {
+            throw new Error('autoPush must be a boolean value');
+        }
+        if (typeof settings.autoAddDate !== 'boolean') {
+            throw new Error('autoAddDate must be a boolean value');
+        }
+        if (typeof settings.autoGenerateTitle !== 'boolean') {
+            throw new Error('autoGenerateTitle must be a boolean value');
         }
     }
 

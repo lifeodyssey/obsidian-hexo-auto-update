@@ -177,7 +177,7 @@ export class FileScannerV2 {
     private async categorizeFiles(
         allFiles: string[],
         gitFiles: { staged: string[]; unstaged: string[]; untracked: string[] },
-        scanPath: string
+        _scanPath: string
     ): Promise<{
         newFiles: string[];
         modifiedFiles: string[];
@@ -374,7 +374,7 @@ export function createHexoPostsScanner(hexoPath: string): FileScannerV2 {
  */
 export function createMarkdownScanner(
     hexoPath: string,
-    customPatterns?: string[]
+    _customPatterns?: string[]
 ): FileScannerV2 {
     const scanner = new FileScannerV2(hexoPath);
     return scanner;

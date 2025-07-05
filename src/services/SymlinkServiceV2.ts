@@ -26,6 +26,12 @@ export class SymlinkServiceV2 {
     }> {
         try {
             const vaultPath = (this.app.vault.adapter as FileSystemAdapter).getBasePath();
+            if (!vaultPath) {
+                return {
+                    success: false,
+                    message: 'Cannot access vault path - check Obsidian permissions'
+                };
+            }
             const targetFolder = this.getTargetFolderName();
             const symlinkPath = path.join(vaultPath, targetFolder);
 
@@ -256,6 +262,13 @@ export class SymlinkServiceV2 {
     }> {
         try {
             const vaultPath = (this.app.vault.adapter as FileSystemAdapter).getBasePath();
+            if (!vaultPath) {
+                return {
+                    isValid: false,
+                    type: 'missing',
+                    needsRecreation: true
+                };
+            }
             const targetFolder = this.getTargetFolderName();
             const symlinkPath = path.join(vaultPath, targetFolder);
             
@@ -315,6 +328,10 @@ export class SymlinkServiceV2 {
     async getBlogPath(): Promise<string | null> {
         try {
             const vaultPath = (this.app.vault.adapter as FileSystemAdapter).getBasePath();
+            if (!vaultPath) {
+                console.debug('Cannot access vault path for getBlogPath');
+                return null;
+            }
             const targetFolder = this.getTargetFolderName();
             const symlinkPath = path.join(vaultPath, targetFolder);
             

@@ -286,7 +286,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
             const recoveryWarnings = results.flatMap(result => result.warnings).filter(warning => warning.startsWith('Original retained'));
             if (recoveryWarnings.length) {
                 console.warn('Front-matter recovery locations:', recoveryWarnings);
-                new Notice(`${recoveryWarnings.length} original post(s) retained in adjacent .hexo-frontmatter-backup-* folders. Check these for late editor changes before deleting backups.`, 12000);
+                new Notice(`${recoveryWarnings.length} post backup(s). Close and reopen external editors before further editing. ${recoveryWarnings[0]}${recoveryWarnings.length > 1 ? ' More locations are listed in the developer console.' : ''}`, 20000);
             }
             
             this.stats.filesProcessed += summary.successful;

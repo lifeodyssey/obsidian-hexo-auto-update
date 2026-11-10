@@ -4,6 +4,8 @@ export class FileSystemAdapter {
     getBasePath(): string { return this.basePath; }
 }
 
+export class TFile { constructor(public path: string) {} }
+
 export class App {
     vault = { adapter: new FileSystemAdapter() };
 }

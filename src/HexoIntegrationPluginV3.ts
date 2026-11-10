@@ -1,11 +1,11 @@
-import { Notice, Plugin } from "obsidian";
+import { FileSystemAdapter, Notice, Plugin, TFile } from "obsidian";
 import path from "path";
 
 // Modern services
 import { SymlinkServiceV2 } from "./services/SymlinkServiceV2";
 import { FileWatcherV2, FileChangeEvent } from "./services/FileWatcherV2";
 import { FileScannerV2 } from "./services/FileScannerV2";
-import { FrontMatterProcessorV2, createHexoFrontMatterProcessor } from "./services/FrontMatterProcessorV2";
+import { FrontMatterProcessorV2, createHexoFrontMatterProcessor, ProcessingResult } from "./services/FrontMatterProcessorV2";
 
 // Legacy compatibility
 import { HexoIntegrationSettings } from "./types";
@@ -16,6 +16,7 @@ import HexoIntegrationSettingsTab from "./settings/hexoIntegrationSettingsTab";
 import { SafeGitService } from './services/SafeGitService';
 import { assertManagedPath, isMarkdown, isInside } from './services/ManagedPaths';
 import { promises as fs } from 'fs';
+import { validateVaultContent, preflightVaultContent, prepareReverseContentLink, VaultContentConfig } from './services/VaultContentMode';
 
 /**
  * Unified Hexo Integration Plugin - V3
@@ -34,6 +35,9 @@ export default class HexoIntegrationPluginV3 extends Plugin {
     private activeSettings: HexoIntegrationSettings;
     private work: Promise<unknown> = Promise.resolve();
     private disposed = false;
+    private gitRoot = '';
+    private postsRoot = '';
+    private scanPath = 'source/_posts';
     
     // State management
     private isInitialized = false;
@@ -64,7 +68,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
             
             this.isInitialized = true;
             // Step 4: Initialize blog integration if configured
-            if (this.settings.hexoSourcePath) {
+            if (this.isConfigured(this.settings)) {
                 await this.enqueue(() => this.initializeBlogIntegration());
             } else {
                 this.showConfigurationNotice();
@@ -124,27 +128,78 @@ export default class HexoIntegrationPluginV3 extends Plugin {
     /**
      * Initialize blog-specific integration
      */
-    private async initializeBlogIntegration(): Promise<void> {
+    private async initializeBlogIntegration(initialScan = true): Promise<void> {
         await this.stopWatching();
         this.git = undefined;
         this.fileScanner = undefined;
         this.activeSettings = { ...this.settings };
         this.validateSettings(this.activeSettings);
-        if (!this.activeSettings.hexoSourcePath) return;
-        const posts = path.join(this.activeSettings.hexoSourcePath, 'source', '_posts');
-        if (!(await fs.stat(posts)).isDirectory()) throw new Error('Hexo source/_posts directory is missing');
-        if (!isInside(await fs.realpath(this.activeSettings.hexoSourcePath), await fs.realpath(posts))) throw new Error('Posts directory must stay inside the repository');
+        if (!this.isConfigured(this.activeSettings)) return;
+        if (this.activeSettings.contentMode === 'vault') {
+            const roots = await validateVaultContent(this.vaultContentConfig());
+            this.gitRoot = roots.gitRoot;
+            this.postsRoot = roots.postsRoot;
+            this.scanPath = path.relative(this.gitRoot, this.postsRoot);
+        } else {
+            this.gitRoot = this.activeSettings.hexoSourcePath;
+            this.postsRoot = path.join(this.gitRoot, 'source', '_posts');
+            this.scanPath = 'source/_posts';
+            if (!(await fs.stat(this.postsRoot)).isDirectory()) throw new Error('Hexo source/_posts directory is missing');
+            if (!isInside(await fs.realpath(this.gitRoot), await fs.realpath(this.postsRoot))) throw new Error('Posts directory must stay inside the repository');
+        }
         this.frontMatterProcessor = createHexoFrontMatterProcessor({
             autoAddDate: this.activeSettings.autoAddDate,
             autoGenerateTitle: this.activeSettings.autoGenerateTitle,
             requiredFields: []
         });
         await this.initializeGitOperations();
-        await this.setupBlogLink();
-        this.fileScanner = new FileScannerV2(this.activeSettings.hexoSourcePath);
+        if (this.activeSettings.contentMode !== 'vault') await this.setupBlogLink();
+        this.fileScanner = new FileScannerV2(this.gitRoot);
         if (this.activeSettings.autoSync) await this.startWatching();
         // Register the watcher first; events are serialized behind this initial scan.
-        await this.performInitialScan();
+        if (initialScan) await this.performInitialScan();
+    }
+
+    private isConfigured(settings: HexoIntegrationSettings): boolean {
+        return !!(settings.contentMode === 'vault' ? settings.vaultContentPath : settings.hexoSourcePath);
+    }
+
+    private vaultContentConfig(): VaultContentConfig {
+        const adapter = this.app.vault.adapter;
+        if (!(adapter instanceof FileSystemAdapter)) throw new Error('Vault content mode requires the desktop filesystem adapter');
+        return { vaultRoot: adapter.getBasePath(), contentRoot: this.activeSettings.vaultContentPath || '',
+            gitRoot: this.activeSettings.contentGitPath || '', hexoRoot: this.activeSettings.hexoEnginePath || undefined };
+    }
+
+    /** Uses Obsidian's coordinated write; never overwrite content changed after async planning. */
+    private async processVaultFiles(files: string[]): Promise<ProcessingResult[]> {
+        const config = this.vaultContentConfig();
+        const results: ProcessingResult[] = [];
+        for (const absolute of files) {
+            const relative = path.relative(config.vaultRoot, absolute).split(path.sep).join('/');
+            const file = this.app.vault.getAbstractFileByPath(relative);
+            if (!(file instanceof TFile)) throw new Error(`Post not indexed by Obsidian yet: ${relative}. Retry Sync Now.`);
+            const original = await this.app.vault.read(file);
+            if (original.includes('\0')) throw new Error('Refusing binary Markdown');
+            const result = await this.frontMatterProcessor.processContent(original, absolute);
+            if (!result.success) throw new Error(result.errors.join('; '));
+            if (result.modified) await this.app.vault.process(file, current => {
+                if (current !== original) throw new Error('Post changed during processing; retry instead of overwriting');
+                return result.processedContent;
+            });
+            results.push(result);
+        }
+        return results;
+    }
+
+    /** Explicit setup only: no content migration, Git initialization, builds or publication. */
+    async prepareVaultBuild(): Promise<void> {
+        await this.enqueue(async () => {
+            if (this.activeSettings.contentMode !== 'vault') throw new Error('Select vault content mode first');
+            await preflightVaultContent(this.vaultContentConfig());
+            const result = await prepareReverseContentLink(this.vaultContentConfig());
+            new Notice(`Build content link ready: ${result.linkPath}. Set Hexo source_dir to content. Nothing was built or published.`, 15000);
+        });
     }
 
     private enqueue<T>(operation: () => Promise<T>): Promise<T> {
@@ -188,8 +243,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
      */
     private async initializeGitOperations(): Promise<void> {
         this.git = undefined;
-        const root = this.activeSettings.hexoSourcePath;
-        const git = new SafeGitService(root, path.join(root, 'source', '_posts'));
+        const git = new SafeGitService(this.gitRoot, this.postsRoot);
         await git.validate();
         this.git = git;
     }
@@ -199,7 +253,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
      */
     private async performInitialScan(): Promise<void> {
         if (!this.fileScanner) throw new Error('Configure a valid Hexo repository before syncing');
-        const scanResult = await this.fileScanner.comprehensiveScan('source/_posts', { includePatterns: ['**/*'] });
+        const scanResult = await this.fileScanner.comprehensiveScan(this.scanPath, { includePatterns: ['**/*'] });
         const files = [...new Set([...scanResult.newFiles, ...scanResult.modifiedFiles])];
         await this.processFrontMatterBatch(files.filter(isMarkdown));
         if (this.git && this.activeSettings.autoCommit) {
@@ -212,12 +266,12 @@ export default class HexoIntegrationPluginV3 extends Plugin {
      * Start file watching
      */
     private async startWatching(): Promise<void> {
-        if (!this.activeSettings.hexoSourcePath || this.isWatching) {
+        if (!this.isConfigured(this.activeSettings) || this.isWatching) {
             return;
         }
 
         try {
-            const postsPath = path.join(this.activeSettings.hexoSourcePath, 'source', '_posts');
+            const postsPath = this.postsRoot;
             
             // Setup file watcher
             const unwatch = this.fileWatcher.watch(
@@ -255,7 +309,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
         const settingsAtEvent = this.activeSettings;
         await this.enqueue(async () => {
             if (settingsAtEvent !== this.activeSettings) return;
-            const posts = path.join(this.activeSettings.hexoSourcePath, 'source', '_posts');
+            const posts = this.postsRoot;
             await assertManagedPath(posts, event.path, event.type === 'unlink');
             if (event.type !== 'unlink' && isMarkdown(event.path)) {
                 await this.processFrontMatterBatch([event.path]);
@@ -277,9 +331,11 @@ export default class HexoIntegrationPluginV3 extends Plugin {
             console.log(`Processing front-matter for ${filePaths.length} files...`);
             
             const files = [...new Set(filePaths)].filter(isMarkdown);
-            const posts = path.join(this.activeSettings.hexoSourcePath, 'source', '_posts');
+            const posts = this.postsRoot;
             for (const file of files) await assertManagedPath(posts, file);
-            const results = await this.frontMatterProcessor.processFiles(files);
+            const results = this.activeSettings.contentMode === 'vault'
+                ? await this.processVaultFiles(files)
+                : await this.frontMatterProcessor.processFiles(files);
             const summary = this.frontMatterProcessor.getSummary(results);
             const recoveryWarnings = results.flatMap(result => result.warnings).filter(warning => warning.startsWith('Original retained'));
             if (recoveryWarnings.length) {
@@ -309,6 +365,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
      */
     private async commitChanges(filePaths: string[]): Promise<void> {
         if (!this.git) throw new Error('Git is not initialized');
+        if (this.activeSettings.contentMode === 'vault') await preflightVaultContent(this.vaultContentConfig());
         const message = `Update posts from Obsidian at ${new Date().toISOString()}`;
         const outcome = await this.git.commit(filePaths, message, this.activeSettings.autoPush);
         if (outcome.committed || outcome.pushed) this.stats.lastSync = new Date();
@@ -322,6 +379,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
         this.addSettingTab(new HexoIntegrationSettingsTab(this.app, this));
         
         // Add commands
+        this.addCommand({id: 'prepare-vault-build', name: 'Prepare Vault Content Build Link', callback: () => this.prepareVaultBuild().catch(error => { new Notice(`Build setup failed: ${error.message}`); })});
         this.addCommand({
             id: 'sync-now',
             name: 'Sync Now',
@@ -388,7 +446,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
         
         try {
             await this.enqueue(async () => {
-                const scanResult = await this.fileScanner!.comprehensiveScan();
+                const scanResult = await this.fileScanner!.comprehensiveScan(this.scanPath);
                 await this.processFrontMatterBatch(scanResult.allFiles);
             });
         } catch (error) {
@@ -416,6 +474,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
     }
     
     private async handleRecreateBlogLink(): Promise<void> {
+        if (this.settings.contentMode === 'vault') { new Notice('Vault mode does not create blog references. Use Prepare Vault Content Build Link.'); return; }
         if (!this.settings.hexoSourcePath) {
             new Notice('Please configure Hexo source path first');
             return;
@@ -490,6 +549,20 @@ export default class HexoIntegrationPluginV3 extends Plugin {
         this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
     }
 
+    async changeContentMode(mode: 'external' | 'vault'): Promise<void> {
+        await this.enqueue(async () => {
+            await this.stopWatching();
+            this.git = undefined;
+            this.fileScanner = undefined;
+            this.settings.contentMode = mode;
+            this.settings.autoSync = false;
+            this.settings.autoCommit = false;
+            this.settings.autoPush = false;
+            // Invalidate any watcher callback queued behind this transition.
+            this.activeSettings = { ...this.settings };
+        });
+    }
+
     async saveSettings(): Promise<void> {
         await this.enqueue(async () => {
             await this.stopWatching();
@@ -497,7 +570,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
             this.fileScanner = undefined;
             this.validateSettings(this.settings);
             await this.saveData(this.settings);
-            if (this.isInitialized) await this.initializeBlogIntegration();
+            if (this.isInitialized) await this.initializeBlogIntegration(false);
         });
     }
 
@@ -506,6 +579,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
      * @param settings Settings to validate
      */
     private validateSettings(settings: HexoIntegrationSettings): void {
+        if (settings.contentMode && !['vault', 'external'].includes(settings.contentMode)) throw new Error('Unknown content mode');
         if (settings.hexoSourcePath && settings.hexoSourcePath.trim() === '') {
             throw new Error('Hexo source path cannot be empty');
         }
@@ -533,6 +607,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
     }
 
     async createSymlink(hexoSourcePath: string): Promise<string> {
+        if (this.settings.contentMode === 'vault') return 'Vault mode never creates an external link inside the vault. Use Prepare Vault Content Build Link.';
         try {
             const result = await this.symlinkService.createSafeSymlink(hexoSourcePath);
             return result.message;

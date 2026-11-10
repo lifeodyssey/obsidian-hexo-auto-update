@@ -1,12 +1,14 @@
-name: Release Obsidian plugin if version changes
+name: Release explicitly tagged Obsidian plugin
 
 on:
   push:
-    branches: [main]
+    tags: ['[0-9]*']
 
 permissions:
   contents: read
 
+# Different versions cannot displace each other's pending publication.
+# Ordinary main-branch pushes never enter this workflow.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -24,19 +26,13 @@ jobs:
         with:
           node-version: '24.x'
           cache: npm
-      - name: Detect version change
-        id: version
-        env:
-          BEFORE_SHA: ${{ github.event.before }}
+      - name: Validate explicit tag and metadata
         run: node scripts/release.mjs plan
       - name: Install locked dependencies
-        if: steps.version.outputs.changed == 'true'
         run: npm ci --ignore-scripts
       - name: Validate
-        if: steps.version.outputs.changed == 'true'
         run: npm run check && npm run build
       - name: Publish configured release
-        if: steps.version.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/release.mjs publish

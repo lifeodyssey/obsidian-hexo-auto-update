@@ -4,62 +4,73 @@ import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
 const execute = (command, args) => execFileSync(command, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
-export function releasePlan(pkg, manifest, config, previous) {
+/** Validate explicit version-tag intent and the committed compatibility/channel metadata. */
+export function releasePlan(pkg, manifest, config, versions, tag) {
+    if (!versionPattern.test(pkg.version) || tag !== pkg.version) throw new Error('Release tag must equal the numeric x.y.z package version');
     if (pkg.version !== manifest.version) throw new Error('Package and manifest versions differ');
-    const changed = previous === null || pkg.version !== previous.version;
-    if (!changed) return { version: pkg.version, changed: false };
-    if (config.version !== pkg.version || !['prerelease', 'stable'].includes(config.channel)) {
-        throw new Error('Set release-config.json to this version and explicitly choose prerelease or stable');
+    if (!manifest.minAppVersion || versions[pkg.version] !== manifest.minAppVersion) throw new Error('Missing or mismatched versions.json compatibility entry');
+    if (config.version !== pkg.version || !['prerelease', 'stable'].includes(config.channel)) throw new Error('Explicit version and channel are required');
+    if (config.notes !== `release-notes/${pkg.version}.md`) throw new Error('Version-specific release notes are required');
+    return { version: pkg.version, channel: config.channel };
+}
+
+/** Resolve a pre-existing immutable tag to a commit; never create or move tags. */
+export function verifyTag(repository, version, sha, run = execute) {
+    const lines = run('git', ['ls-remote', `https://github.com/${repository}.git`, `refs/tags/${version}`, `refs/tags/${version}^{}`])
+        .split('\n').filter(Boolean).map(line => line.split(/\s+/));
+    const tag = lines.find(line => line[1]?.endsWith('^{}')) || lines.find(line => line[1] === `refs/tags/${version}`);
+    if (!tag || tag[0] !== sha) throw new Error('Release tag missing or points to a different commit');
+}
+
+/** Fail closed on draft target/channel conflicts; target_commitish is not a reliable immutable SHA. */
+export function verifyRelease(release, repository, version, channel, sha, run = execute) {
+    if (release.tag_name !== version) throw new Error('Release tag mismatch');
+    if (release.prerelease !== (channel === 'prerelease')) throw new Error('Existing release has a different channel');
+    // GitHub target_commitish can be a mutable branch; resolve it rather than treating its name as a SHA.
+    // For published releases the immutable tag is authoritative; drafts must also match their proposed target.
+    if (release.draft) {
+        if (!release.target_commitish) throw new Error('Draft target is missing');
+        const target = JSON.parse(run('gh', ['api', `repos/${repository}/commits/${encodeURIComponent(release.target_commitish)}`]));
+        if (target.sha !== sha) throw new Error('Draft target points to a different commit');
     }
-    return { version: pkg.version, changed: true, channel: config.channel };
+    verifyTag(repository, version, sha, run);
 }
 
-export function versionBeforePush(before, run = execute) {
-    if (!/^[0-9a-f]{40}$/.test(before)) throw new Error('Missing or invalid push base SHA');
-    return /^0+$/.test(before) ? null : JSON.parse(run('git', ['show', `${before}:package.json`]));
-}
-
+/** Publish verified build artifacts, resuming matching drafts without replacing published assets. */
 export function publish({ repository, version, channel, sha, assets, notes }, run = execute) {
-    if (!/^[\w.-]+\/[\w.-]+$/.test(repository) || !/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(version) || !/^[0-9a-f]{40}$/.test(sha)) {
-        throw new Error('Invalid release inputs');
-    }
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repository) || !versionPattern.test(version) || !/^[0-9a-f]{40}$/.test(sha)) throw new Error('Invalid release inputs');
     if (!['prerelease', 'stable'].includes(channel)) throw new Error('Release channel is required');
-    const refs = run('git', ['ls-remote', 'origin', `refs/tags/${version}`, `refs/tags/${version}^{}`]);
-    const lines = refs.split('\n').filter(Boolean).map(line => line.split(/\s+/));
-    const tag = lines.find(line => line[1].endsWith('^{}')) || lines[0];
-    if (tag && tag[0] !== sha) throw new Error('Existing tag points to a different commit; refusing to replace it');
-
+    verifyTag(repository, version, sha, run);
+    const endpoint = `repos/${repository}/releases/tags/${version}`;
     let release;
-    try {
-        release = JSON.parse(run('gh', ['api', `repos/${repository}/releases/tags/${version}`]));
-    } catch (error) {
-        // Network, authorization and rate-limit errors are not evidence of an absent release.
+    try { release = JSON.parse(run('gh', ['api', endpoint])); }
+    catch (error) {
         if (!String(error.stderr || '').includes('(HTTP 404)')) throw error;
-        run('gh', ['release', 'create', version, '--repo', repository, '--target', sha,
-            '--title', `v${version}${channel === 'prerelease' ? ' security preview' : ''}`,
-            '--notes-file', notes, '--draft', ...(channel === 'prerelease' ? ['--prerelease'] : [])]);
-        release = { draft: true, assets: [] };
+        run('gh', ['release', 'create', version, '--repo', repository, '--verify-tag', '--target', sha,
+            '--title', `v${version}${channel === 'prerelease' ? ' preview' : ''}`, '--notes-file', notes,
+            '--draft', ...(channel === 'prerelease' ? ['--prerelease'] : [])]);
+        release = JSON.parse(run('gh', ['api', endpoint]));
     }
-    if (!release.draft && release.prerelease !== (channel === 'prerelease')) {
-        throw new Error('Existing published release has a different channel; refusing to change it');
-    }
+    verifyRelease(release, repository, version, channel, sha, run);
     const upload = assets.filter(asset => {
         if (release.draft) return true;
         const existing = release.assets.find(item => item.name === asset.name);
         if (!existing) return true;
-        if (existing.size !== asset.size || existing.digest !== asset.digest) {
-            throw new Error(`Published asset differs or has no verifiable digest: ${asset.name}`);
-        }
+        if (existing.size !== asset.size || existing.digest !== asset.digest) throw new Error(`Published asset differs or has no verifiable digest: ${asset.name}`);
         return false;
     });
     if (upload.length) {
-        run('gh', ['release', 'upload', version, '--repo', repository,
-            ...upload.map(asset => asset.path), ...(release.draft ? ['--clobber'] : [])]);
+        verifyTag(repository, version, sha, run);
+        run('gh', ['release', 'upload', version, '--repo', repository, ...upload.map(asset => asset.path), ...(release.draft ? ['--clobber'] : [])]);
     }
     if (release.draft) {
-        run('gh', ['release', 'edit', version, '--repo', repository, '--draft=false',
-            `--prerelease=${channel === 'prerelease'}`, ...(channel === 'prerelease' ? ['--latest=false'] : [])]);
+        // Re-read after uploading: another actor may have changed the draft while this job was running.
+        release = JSON.parse(run('gh', ['api', endpoint]));
+        verifyRelease(release, repository, version, channel, sha, run);
+        if (!release.draft) throw new Error('Draft was published concurrently; inspect assets before retry');
+        run('gh', ['release', 'edit', version, '--repo', repository, '--draft=false', `--prerelease=${channel === 'prerelease'}`, ...(channel === 'prerelease' ? ['--latest=false'] : [])]);
     }
 }
 
@@ -67,18 +78,16 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const readJson = file => JSON.parse(readFileSync(file, 'utf8'));
     const pkg = readJson('package.json');
     const config = readJson('release-config.json');
+    const plan = releasePlan(pkg, readJson('manifest.json'), config, readJson('versions.json'), process.env.GITHUB_REF_NAME);
+    const notes = readFileSync(config.notes, 'utf8');
+    if (!notes.startsWith(`<!-- release:${plan.version} channel:${plan.channel} -->`)) throw new Error('Release notes channel/version mismatch');
     if (process.argv[2] === 'plan') {
-        const plan = releasePlan(pkg, readJson('manifest.json'), config, versionBeforePush(process.env.BEFORE_SHA));
         appendFileSync(process.env.GITHUB_OUTPUT, Object.entries(plan).map(([k, v]) => `${k}=${v}`).join('\n') + '\n');
     } else if (process.argv[2] === 'publish') {
         const assets = ['dist/main.js', 'manifest.json', 'styles.css'].map(path => {
             const bytes = readFileSync(path);
             return { path, name: path.split('/').pop(), size: bytes.length, digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}` };
         });
-        if (config.version !== pkg.version) throw new Error('Release config version mismatch');
-        publish({ repository: process.env.GITHUB_REPOSITORY, version: pkg.version, channel: config.channel,
-            sha: process.env.GITHUB_SHA, assets, notes: 'SECURITY_DEPENDENCIES.md' });
-    } else {
-        throw new Error('Expected plan or publish');
-    }
+        publish({ repository: process.env.GITHUB_REPOSITORY, ...plan, sha: execute('git', ['rev-parse', 'HEAD']), assets, notes: config.notes });
+    } else throw new Error('Expected plan or publish');
 }

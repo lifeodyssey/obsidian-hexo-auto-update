@@ -59,3 +59,24 @@ test('manual sync surfaces scan failure, not success', async () => {
     expect(notices.some(message => message.includes('Manual sync failed'))).toBe(true);
     expect(notices.some(message => message.includes('Manual sync completed'))).toBe(false);
 });
+
+test('applying settings initializes without triggering initial sync or publication', async () => {
+    const {plugin,state}=fixture(); state.isInitialized=true;
+    const initialize=jest.spyOn(state,'initializeBlogIntegration').mockResolvedValue(undefined);
+    await plugin.saveSettings();
+    expect(initialize).toHaveBeenCalledWith(false);
+});
+
+test('changing content mode drains prior work, invalidates old settings and disables auto actions',async()=>{
+    const {plugin,state}=fixture();
+    const previous={...DEFAULT_SETTINGS, autoPush:true}; state.activeSettings=previous;
+    state.git={commit:jest.fn()};state.fileScanner={};
+    let complete!:()=>void; const gate=new Promise<void>(resolve=>{complete=resolve;});
+    const pending=state.enqueue(()=>gate);
+    const changing=plugin.changeContentMode('vault');
+    expect(state.activeSettings).toBe(previous);
+    complete();await pending;await changing;
+    expect(state.activeSettings).not.toBe(previous);
+    expect(plugin.settings).toMatchObject({contentMode:'vault',autoSync:false,autoCommit:false,autoPush:false});
+    expect(state.git).toBeUndefined();expect(state.fileScanner).toBeUndefined();
+});

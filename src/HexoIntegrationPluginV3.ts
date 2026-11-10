@@ -157,7 +157,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
     }
 
     /**
-     * Setup blog symlink with safe permission handling
+     * Setup an inert blog reference without exposing an external tree to the vault indexer
      */
     private async setupBlogLink(): Promise<void> {
         try {
@@ -165,23 +165,21 @@ export default class HexoIntegrationPluginV3 extends Plugin {
             const validation = await this.symlinkService.validateSymlink(this.settings.hexoSourcePath);
             
             if (validation.needsRecreation) {
-                console.log('Creating/updating blog link...');
+                console.log('Creating safe blog reference...');
                 const result = await this.symlinkService.createSafeSymlink(this.settings.hexoSourcePath);
                 
                 if (!result.success) {
-                    console.warn('Symlink creation failed:', result.message);
-                    if (!result.fallback) {
-                        throw new Error(`Failed to create blog link: ${result.message}`);
-                    }
+                    console.warn('Blog reference creation failed:', result.message);
+                    throw new Error(`Failed to create blog reference: ${result.message}`);
                 }
             } else {
-                console.log(`Blog link is valid (${validation.type})`);
+                console.log(`Blog reference is valid (${validation.type})`);
             }
             
         } catch (error) {
-            console.error('Blog link setup failed:', error);
+            console.error('Blog reference setup failed:', error);
             // Don't throw - allow plugin to continue with reduced functionality
-            new Notice(`⚠️ Blog link setup failed: ${error.message}\nSome features may be limited.`);
+            new Notice(`⚠️ Blog reference setup failed: ${error.message}\nExternal posts are still synced directly; existing external links must be migrated manually.`);
         }
     }
 
@@ -350,7 +348,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
         
         this.addCommand({
             id: 'recreate-blog-link',
-            name: 'Recreate Blog Link',
+            name: 'Create Safe Blog Reference',
             callback: () => this.handleRecreateBlogLink()
         });
     }
@@ -426,9 +424,9 @@ export default class HexoIntegrationPluginV3 extends Plugin {
         try {
             const result = await this.symlinkService.createSafeSymlink(this.settings.hexoSourcePath);
             if (result.success) {
-                new Notice('✅ Blog link recreated successfully');
+                new Notice('✅ Safe blog reference ready (not a live external folder)');
             } else {
-                new Notice(`❌ Failed to recreate blog link: ${result.message}`);
+                new Notice(`❌ Blog reference not changed: ${result.message}`);
             }
         } catch (error) {
             console.error('Recreate blog link failed:', error);
@@ -537,9 +535,9 @@ export default class HexoIntegrationPluginV3 extends Plugin {
     async createSymlink(hexoSourcePath: string): Promise<string> {
         try {
             const result = await this.symlinkService.createSafeSymlink(hexoSourcePath);
-            return result.success ? 'success' : 'failure';
+            return result.message;
         } catch (error) {
-            console.error('Symlink creation failed:', error);
+            console.error('Blog reference creation failed:', error);
             return 'failure';
         }
     }

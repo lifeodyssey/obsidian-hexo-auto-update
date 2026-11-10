@@ -1,424 +1,73 @@
-# Obsidian-Hexo Integration Plugin v2.0
+# Obsidian–Hexo Auto Updater
 
-**🚀 Next-generation event-driven plugin for seamlessly syncing Obsidian notes to Hexo blogs**
+Desktop Obsidian plugin that watches a local Hexo `source/_posts` directory, fills missing Markdown front matter, and optionally commits or pushes changes with Git.
 
-[![Version](https://img.shields.io/badge/version-2.0.1%20preview-blue.svg)](https://github.com/your-repo/releases)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)](#testing)
-[![Coverage](https://img.shields.io/badge/coverage-85%25-brightgreen.svg)](#testing)
+**Development status:** 2.0.1 is a prerelease. The safety changes on this branch have automated filesystem/Git tests, but are not yet validated inside a real Obsidian desktop installation. Do not treat CI as proof that your vault, operating system, or Git setup is compatible. Back up your vault and blog and try a disposable copy first.
 
-## ✨ What's New in v2.0
+[Releases](https://github.com/lifeodyssey/obsidian-hexo-auto-update/releases) · [Issues](https://github.com/lifeodyssey/obsidian-hexo-auto-update/issues)
 
-The Obsidian-Hexo Integration Plugin has been completely redesigned with a modern, event-driven architecture that delivers:
+## Requirements and setup
 
-### 🚀 **Dramatic Performance Improvements**
-- **90% reduction in CPU usage** - replaced polling with reactive file watching
-- **Instant response** to file changes (vs 60-second polling delay)
-- **Batch processing** for handling multiple file changes efficiently
-- **Smart debouncing** prevents excessive processing during rapid changes
+- Desktop Obsidian; mobile is not supported. The manifest minimum is 0.15.0, but this is not a tested compatibility guarantee for every installer. Obsidian's embedded Node/Electron version depends on its installer, not just the app update.
+- Git installed and a local Hexo Git repository with `source/_posts` already present.
+- Configure **Hexo source path** as the absolute repository root, not `_posts` itself.
+- Git identity and, for optional pushes, a working remote/upstream and authentication must be configured outside this plugin.
 
-### 🏗️ **Modern Architecture**
-- **Event-driven design** with RxJS-powered reactive programming
-- **Dependency injection** for better testability and modularity
-- **Circuit breakers** and retry logic for robust error handling
-- **Comprehensive logging** and monitoring capabilities
+For manual installation, download `main.js`, `manifest.json`, and `styles.css` from the same release into `<vault>/.obsidian/plugins/hexo-auto-updater/`, reload Obsidian, and enable the plugin. Check the actual `id` in `manifest.json` if using a development build.
 
-### 🔒 **Enhanced Reliability**
-- **Automatic error recovery** with exponential backoff
-- **Resource leak prevention** with proper disposal patterns
-- **Configuration validation** with type safety
-- **Graceful degradation** during partial failures
+## Behavior and safety boundaries
 
-## 📋 Features
+- Auto-sync watches posts and assets. Markdown (`.md` / `.markdown`) is eligible for front-matter processing; binary assets are never parsed as Markdown.
+- Existing front-matter values are preserved. Date/title are added only when missing and their settings are enabled. Invalid YAML or unsafe/non-text files stop that sync operation rather than being silently committed.
+- Automatic startup/manual scans process new or modified posts, not every clean post. **Process All Posts Front-Matter** is an explicit command that can update clean posts too.
+- Changes and deletions under `_posts` can be committed. Unrelated README/config edits are not included. If any user changes are already staged or conflicted, automatic commits stop so partial staging is not consumed.
+- Auto-push is off by default. A failed push is reported; a later sync retries when Git reports local commits ahead of the upstream. There is no background exponential-backoff retry service.
+- Before writing, the original file is moved into an adjacent hidden `.hexo-frontmatter-backup-*` folder and retained there. The replacement is created only if its destination is still absent; a competing editor-created file is never overwritten. If an editor writes through an old open descriptor, its changes remain in the retained backup, not necessarily the visible post. Check these recovery folders and the console notices before deleting them. Backups are excluded from automatic scanning/commits. This is a recoverability safeguard, NOT cross-process locking or a power-failure guarantee; a brief absent-file interval can be visible to editors. Filesystems without hard-link support fail closed and may require manual restoration from the reported backup.
+- New vault references are ordinary directories containing instructions and configuration, **not symlinks and not copies of your posts**. This prevents this plugin from introducing an external repository tree for Obsidian itself to index/watch. Synchronization still accesses the configured `_posts` directly. You can edit those posts in an external editor; the reference does not provide in-vault editing of them.
+- Existing real files/directories and old external links are **not deleted or replaced**. Old links remain a host indexing risk until you migrate them; plugin watcher settings cannot control Obsidian's own indexer. Back up first, close Obsidian, verify that the old `Mac Blog` / `Win Blog` / `Hexo Blog` entry really is a link, and manually move that link out of the vault without moving or deleting its target. Reopen Obsidian and run Create Safe Blog Reference. Never apply these link-only instructions to a real directory containing notes. If permission errors remain, keep the plugin disabled while investigating the remaining host links/permissions.
+- Plugin operations are serialized. External Git commands and other programs are not controlled by this queue.
 
-### Core Functionality
-- ✅ **Real-time file watching** - Instant detection of markdown file changes
-- ✅ **Automatic content processing** - Front-matter validation and enhancement
-- ✅ **Batch git operations** - Efficient handling of multiple file changes
-- ✅ **Smart commit messages** - Template-based commit message generation
-- ✅ **Auto-push capability** - Optional automatic pushing to remote repository
-- ✅ **Manual sync** - On-demand synchronization with detailed status
+Defaults enable auto-sync and auto-commit, but not auto-push. For the first trial, disable auto-commit and use a disposable repository.
 
-### Advanced Features
-- 🔄 **Event-driven coordination** - Services communicate through events
-- 📊 **Performance monitoring** - Real-time metrics and status tracking
-- 🔧 **Configurable behavior** - Extensive customization options
-- 🛡️ **Error resilience** - Circuit breakers and retry mechanisms
-- 📝 **Structured logging** - Comprehensive logging with multiple transports
-- 🔀 **Migration utilities** - Seamless upgrade from v1.x
+### Recovery after a concurrent edit
 
-### Developer Features
-- 🧪 **Comprehensive testing** - Unit, integration, and performance tests
-- 📚 **Complete documentation** - Architecture guides and API references
-- 🔍 **Type safety** - Full TypeScript implementation
-- 🎯 **Dependency injection** - Modular and testable architecture
+Stop auto-sync and close external editors first. The notice identifies the retained original; additional paths are in the developer console. Compare both the current post and its `.bak` file, which may contain later edits, and keep copies of both until reconciled. Reopen the editor after reconciliation so it no longer writes through an old descriptor.
 
-## 📦 Installation
+If the operation restored a missing post using a hard link, that post and its backup intentionally share one inode. Later processing refuses `nlink > 1`. After reviewing both versions, save the chosen content as a **new independent regular file** (not a hard link) and replace the post only with all editors closed. Do not remove recovery folders blindly. There is no automatic backup cleanup or merge.
 
-### Prerequisites
-- **Obsidian** 1.0.0 or higher
-- **Git repository** properly configured for your Hexo blog
-- **Node.js** 16+ (for development only)
+## Commands
 
-### Installation Methods
+- Sync Now
+- Toggle Auto-Sync
+- Process All Posts Front-Matter
+- Show Plugin Statistics
+- Create Safe Blog Reference
 
-#### Method 1: Obsidian Community Plugins (Recommended)
-1. Open Obsidian Settings
-2. Navigate to Community Plugins
-3. Search for "Hexo Integration"
-4. Install and enable the plugin
+Statistics are session counters, not a complete audit log. Sync errors appear as notices and in the developer console.
 
-#### Method 2: Manual Installation
-1. Download the latest release from [GitHub Releases](https://github.com/your-repo/releases)
-2. Extract to `<vault>/.obsidian/plugins/hexo-auto-updater/`
-3. Reload Obsidian
-4. Enable the plugin in Settings → Community Plugins
+## Development and verification
 
-#### Method 3: Development Installation
-```bash
-git clone https://github.com/your-repo/obsidian-hexo-auto-update
-cd obsidian-hexo-auto-update
-npm install
-npm run build
-```
+Use Node 24 for the development toolchain, then:
 
-## ⚡ Quick Start
-
-### 1. Configure Plugin Settings
-1. Open **Settings** → **Hexo Integration**
-2. Set **Hexo Source Path** to your blog's source directory
-3. Configure **Git Settings** (commit templates, auto-push, etc.)
-4. Adjust **Sync Settings** (batch size, debounce timing)
-
-### 2. Basic Configuration Example
-```json
-{
-  "paths": {
-    "source": "/path/to/hexo/blog",
-    "posts": "source/_posts",
-    "vault": "/path/to/obsidian/vault"
-  },
-  "sync": {
-    "watchMode": true,
-    "batchSize": 10,
-    "debounceMs": 1000
-  },
-  "git": {
-    "autoCommit": true,
-    "autoPush": false,
-    "commitMessageTemplate": "Update {{count}} posts: {{files}}"
-  }
-}
-```
-
-### 3. Start Using
-- **Automatic mode**: Enable watch mode and start writing - changes are detected instantly
-- **Manual mode**: Use the "Sync Now" command when ready to publish
-- **Status monitoring**: Check sync status with the "Show Sync Status" command
-
-## 🎮 Usage
-
-### Commands
-Access these commands via the Command Palette (`Ctrl/Cmd + P`):
-
-- **Hexo Integration: Sync Now** - Manually trigger synchronization
-- **Hexo Integration: Toggle Watch Mode** - Enable/disable automatic watching
-- **Hexo Integration: Show Sync Status** - Display current synchronization status
-
-### Settings Panel
-Configure the plugin through **Settings** → **Hexo Integration**:
-
-- **Paths Configuration** - Set source, posts, and vault directories
-- **Sync Settings** - Configure batch processing and timing
-- **Git Settings** - Set up commit templates and push behavior
-- **Front-matter Settings** - Configure automatic date addition and required fields
-
-### Event Monitoring
-Monitor plugin activity through:
-- **Console logs** - Detailed operation logging
-- **Status bar** - Real-time sync status indicator  
-- **Event history** - Complete audit trail of all operations
-
-## 🔧 Configuration
-
-### Complete Configuration Schema
-```typescript
-interface HexoConfig {
-  paths: {
-    source: string;        // Path to Hexo blog source
-    posts: string;         // Relative path to posts directory
-    output: string;        // Output directory
-    vault: string;         // Obsidian vault path
-  };
-  sync: {
-    watchMode: boolean;    // Enable automatic file watching
-    batchSize: number;     // Maximum files per batch
-    debounceMs: number;    // Debounce delay for file changes
-    retryAttempts: number; // Maximum retry attempts
-    retryDelayMs: number;  // Base retry delay
-  };
-  git: {
-    commitMessageTemplate: string; // Template for commit messages
-    autoCommit: boolean;           // Automatically commit changes
-    autoPush: boolean;             // Automatically push to remote
-    branchName: string;            // Default branch name
-  };
-  frontMatter: {
-    autoAddDate: boolean;     // Automatically add date field
-    dateFormat: string;       // Date format string
-    requiredFields: string[]; // Required front-matter fields
-  };
-}
-```
-
-### Environment Variables
-```bash
-# Optional: Enable debug logging
-HEXO_INTEGRATION_DEBUG=true
-
-# Optional: Override configuration file location
-HEXO_INTEGRATION_CONFIG=/custom/path/to/config.json
-```
-
-## 📊 Performance
-
-### Benchmarks (v2.0 vs v1.x)
-
-| Metric | v1.x (Legacy) | v2.0 (New) | Improvement |
-|--------|---------------|------------|-------------|
-| **CPU Usage** | ~15% continuous | ~1.5% on-demand | **90% reduction** |
-| **File Change Response** | 60 seconds | <100ms | **600x faster** |
-| **Memory Usage** | Growing over time | Stable | **No memory leaks** |
-| **Batch Processing** | Not supported | 100+ files/min | **New capability** |
-| **Error Recovery** | Manual intervention | Automatic | **100% improvement** |
-
-### Performance Monitoring
-```bash
-# Run performance benchmarks
-npm run benchmark
-
-# Monitor resource usage
-npm run health:check
-
-# View detailed performance report
-npm run test:performance -- --verbose
-```
-
-## 🧪 Testing
-
-The plugin includes comprehensive testing across multiple categories:
-
-### Test Suites
-```bash
-# Run all tests
-npm test
-
-# Run specific test categories
-npm run test:unit          # Core component testing
-npm run test:integration   # Multi-service workflow testing
-npm run test:performance   # Benchmarking and load testing
-
-# Generate coverage report
-npm run test:coverage
-
-# Run tests in watch mode during development
-npm run test:watch
-```
-
-### Test Coverage
-- **Unit Tests**: 90%+ coverage for core infrastructure
-- **Integration Tests**: 80%+ coverage for service interactions
-- **Performance Tests**: All critical paths benchmarked
-- **End-to-End Tests**: Complete user workflows validated
-
-## 🔄 Migration from v1.x
-
-### Automatic Migration
-The plugin includes built-in migration utilities:
-
-```typescript
-// Migration happens automatically on first load
-// or can be triggered manually:
-const migration = new MigrationUtilities(app);
-const result = await migration.migrate({
-  createBackup: true,
-  validateAfterMigration: true,
-  preserveLegacySettings: true
-});
-```
-
-### Migration Features
-- ✅ **Automatic backup creation** before migration
-- ✅ **Settings conversion** from legacy format
-- ✅ **Validation** of migrated configuration
-- ✅ **Rollback capability** if needed
-- ✅ **Zero-downtime** migration process
-
-### What's Preserved
-- All existing settings and preferences
-- Git repository configuration
-- File paths and directory structure
-- Custom commit message templates
-
-### What's Improved
-- Performance (90% CPU reduction)
-- Reliability (automatic error recovery)
-- Features (batch processing, real-time monitoring)
-- Architecture (event-driven, modular design)
-
-For detailed migration instructions, see the [Migration Guide](./MIGRATION_GUIDE.md).
-
-## 📚 Documentation
-
-### User Documentation
-- **[Migration Guide](./MIGRATION_GUIDE.md)** - Comprehensive upgrade instructions
-- **[Configuration Reference](./ARCHITECTURE_DOCUMENTATION.md#configuration)** - Complete configuration options
-- **[Troubleshooting Guide](./MIGRATION_GUIDE.md#troubleshooting)** - Common issues and solutions
-
-### Developer Documentation
-- **[Architecture Documentation](./ARCHITECTURE_DOCUMENTATION.md)** - System design and components
-- **[API Reference](./ARCHITECTURE_DOCUMENTATION.md#api-reference)** - Service interfaces and methods
-- **[Security Review](./SECURITY_REVIEW.md)** - Security analysis and best practices
-
-### GitHub Pages & Hexo Setup
-For complete setup instructions including GitHub Actions configuration, see:
-- **[GitHub Pages Setup Guide](docs/github-pages-setup.md)**
-- **[Hexo Configuration Examples](docs/hexo-examples.md)**
-
-## 🛠️ Development
-
-### Development Setup
-```bash
-# Clone repository
-git clone https://github.com/your-repo/obsidian-hexo-auto-update
-cd obsidian-hexo-auto-update
-
-# Install dependencies
-npm install
-
-# Start development mode
-npm run dev
-
-# Run type checking
-npm run typecheck
-
-# Run linting
+```sh
+npm ci
 npm run lint
+npm run typecheck
+npm test
+npm run build
+npm audit --omit=dev
 ```
 
-### Project Structure
-```
-src/
-├── core/                 # Core infrastructure
-│   ├── container/        # Dependency injection
-│   ├── config/          # Configuration management
-│   ├── events/          # Event bus system
-│   ├── logging/         # Structured logging
-│   └── resilience/      # Error handling patterns
-├── services/            # Business logic services
-│   ├── file-watcher/    # Reactive file watching
-│   ├── content-processing/ # Markdown and front-matter processing
-│   ├── git-operations/  # Git repository management
-│   └── synchronization/ # Service orchestration
-├── migration/           # Migration utilities
-├── HexoIntegrationPluginV2.ts # Main plugin class
-└── types.ts            # Type definitions
-```
+Tests include real temporary filesystem and local Git repository fixtures plus mocked Obsidian/Electron APIs. They do not execute inside the real host or test a live vault. Coverage percentages describe the files exercised by the tests, not every shipped feature. No measured CPU reduction, universal compatibility, or production reliability percentage is claimed.
 
-### Contributing
-1. **Fork** the repository
-2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
-3. **Commit** your changes (`git commit -m 'Add amazing feature'`)
-4. **Push** to the branch (`git push origin feature/amazing-feature`)
-5. **Open** a Pull Request
+The runtime retains Chokidar 4 rather than requiring new Node `fs.glob` APIs or Chokidar 6. Updating the build machine's Node does not update Obsidian's embedded runtime. The current development dependency audit has a low-severity transitive `deepmerge` advisory with no patched latest release at the time checked; the production-only audit is separate.
 
-### Code Standards
-- **TypeScript** for all source code
-- **85%+ test coverage** required
-- **ESLint + Prettier** for code formatting
-- **Conventional commits** for commit messages
+## Release process
 
-## 🔒 Security
+A version bump must also select an explicit matching version and channel in `release-config.json`. CI tests and builds before publication. Releases are initially drafts until all three assets upload; retries validate existing tags/assets rather than silently overwriting published content. Follow-up commits without a version change do not republish an existing release.
 
-### Security Features
-- ✅ **Input validation** for all user inputs and configuration
-- ✅ **Path traversal protection** for file operations
-- ✅ **Secure git operations** using parameterized commands
-- ✅ **No credential storage** - uses existing git configuration
-- ✅ **Error information sanitization** prevents information disclosure
+Before releasing functional changes, validate installation, editing, assets, deletion, settings changes, shutdown, and Git failures in a **disposable real Obsidian vault**, including the operating systems to be supported. Never use your only copy of notes for this test.
 
-### Security Best Practices
-- Use SSH keys for git authentication
-- Set appropriate file permissions on repositories
-- Monitor plugin logs for suspicious activity
-- Keep dependencies updated
+## License
 
-For complete security information, see the [Security Review](./SECURITY_REVIEW.md).
-
-## 🎯 Roadmap
-
-### v2.1 (Next Minor Release)
-- [ ] **Windows support** - Full compatibility with Windows file systems
-- [ ] **Plugin marketplace** - Extensible processor plugins
-- [ ] **Advanced templates** - Customizable front-matter templates
-- [ ] **Conflict resolution** - Handling simultaneous edits
-
-### v2.2 (Future Features)
-- [ ] **Multi-blog support** - Sync to multiple Hexo blogs
-- [ ] **Image optimization** - Automatic image compression and CDN upload
-- [ ] **Link transformation** - Convert Obsidian links to Hexo format
-- [ ] **Preview mode** - Preview changes before committing
-
-### v3.0 (Major Features)
-- [ ] **Real-time collaboration** - Multi-user editing support
-- [ ] **Cloud sync** - Direct integration with cloud storage
-- [ ] **AI-powered features** - Automatic tagging and categorization
-- [ ] **Advanced analytics** - Blog performance insights
-
-## 🆘 Support
-
-### Getting Help
-- **📖 Documentation**: Comprehensive guides and API reference
-- **🐛 Bug Reports**: [GitHub Issues](https://github.com/your-repo/issues)
-- **💡 Feature Requests**: [GitHub Discussions](https://github.com/your-repo/discussions)
-- **❓ Questions**: [Community Forum](https://forum.obsidian.md)
-
-### Troubleshooting
-1. **Check the console** - Look for error messages in Developer Tools
-2. **Verify configuration** - Ensure paths and git settings are correct
-3. **Test git access** - Verify git repository access outside of Obsidian
-4. **Review logs** - Check plugin logs for detailed error information
-5. **Try migration** - Re-run migration if upgrading from v1.x
-
-### Common Issues
-- **File watching not working**: Check file permissions and path configuration
-- **Git operations failing**: Verify repository setup and authentication
-- **Performance issues**: Review batch size and debounce settings
-- **Migration problems**: See detailed troubleshooting in [Migration Guide](./MIGRATION_GUIDE.md)
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- **Obsidian Team** - For creating an amazing platform for plugin development
-- **Hexo Community** - For the excellent static site generator
-- **Contributors** - Everyone who helped improve this plugin
-- **RxJS Team** - For the reactive programming library that powers our file watching
-- **TypeScript Team** - For the excellent type system that ensures code quality
-
-## 📈 Stats
-
-- **⭐ GitHub Stars**: [Count]
-- **📥 Downloads**: [Count]
-- **🐛 Issues Resolved**: [Count]
-- **🚀 Performance Improvement**: 90% CPU reduction
-- **📊 Test Coverage**: 85%+
-- **🔧 Code Quality**: A+ rating
-
----
-
-**Made with ❤️ for the Obsidian and Hexo communities**
-
-*Transform your note-taking workflow into a powerful blog publishing pipeline with the speed and reliability of modern event-driven architecture.*
+[MIT](LICENSE)

@@ -1,7 +1,9 @@
 import { glob } from 'fast-glob';
 import { promises as fs } from 'fs';
 import path from 'path';
-import { simpleGit } from 'simple-git';
+import { simpleGit, SimpleGit } from 'simple-git';
+import { isInside, isMarkdown, assertManagedPath } from './ManagedPaths';
+import matter from 'gray-matter';
 
 /**
  * Direct filesystem scanner using fast-glob
@@ -13,7 +15,9 @@ export interface ScanResult {
     newFiles: string[];           // Files not in git at all
     modifiedFiles: string[];      // Files changed since last commit
     untrackedFiles: string[];     // Files git knows but not committed
+    deletedFiles: string[];
     gitFiles: {
+        deleted?: string[];
         staged: string[];
         unstaged: string[];
         untracked: string[];
@@ -32,7 +36,7 @@ export interface ScanOptions {
 
 export class FileScannerV2 {
     private hexoPath: string;
-    private git: any;
+    private git: SimpleGit;
 
     constructor(hexoPath: string) {
         this.hexoPath = hexoPath;
@@ -49,37 +53,40 @@ export class FileScannerV2 {
         scanPath: string = 'source/_posts',
         options: ScanOptions = {}
     ): Promise<ScanResult> {
-        const fullScanPath = path.join(this.hexoPath, scanPath);
-        
+        const fullScanPath = path.resolve(this.hexoPath, scanPath);
+        if (!isInside(this.hexoPath, fullScanPath)) throw new Error('Scan path must be inside the repository');
+        await fs.access(fullScanPath);
+
         try {
             // Step 1: Get all files from filesystem
             const allFiles = await this.scanFilesystem(fullScanPath, options);
-            
+
             // Step 2: Get git status
-            let gitFiles: { staged: string[]; unstaged: string[]; untracked: string[] } = { 
-                staged: [], 
-                unstaged: [], 
-                untracked: [] 
+            let gitFiles: { deleted?: string[]; staged: string[]; unstaged: string[]; untracked: string[] } = {
+                staged: [],
+                unstaged: [],
+                untracked: []
             };
             if (options.gitAware !== false) {
                 gitFiles = await this.getGitStatus(scanPath);
             }
-            
+
             // Step 3: Determine what's truly new vs modified
             const { newFiles, modifiedFiles, untrackedFiles } = await this.categorizeFiles(
-                allFiles, 
-                gitFiles, 
+                allFiles,
+                gitFiles,
                 scanPath
             );
-            
+
             return {
                 allFiles,
                 newFiles,
                 modifiedFiles,
                 untrackedFiles,
+                deletedFiles: gitFiles.deleted || [],
                 gitFiles
             };
-            
+
         } catch (error) {
             console.error('Comprehensive scan failed:', error);
             throw error;
@@ -97,9 +104,9 @@ export class FileScannerV2 {
             '**/*.md',
             '**/*.markdown'
         ];
-        
+
         const patterns = options.includePatterns || defaultPatterns;
-        
+
         const globOptions = {
             cwd: scanPath,
             dot: false, // Don't include hidden files
@@ -122,16 +129,25 @@ export class FileScannerV2 {
 
         try {
             const files = await glob(patterns, globOptions);
-            
+
             // Convert to absolute paths
-            const absoluteFiles = files.map(file => path.resolve(scanPath, file));
-            
+            const absoluteFiles: string[] = [];
+            for (const file of files) {
+                const absolute = path.resolve(scanPath, file);
+                try {
+                    await assertManagedPath(scanPath, absolute);
+                    if ((await fs.lstat(absolute)).isFile()) absoluteFiles.push(absolute);
+                } catch (error) {
+                    if (error.code !== 'ENOENT') throw error;
+                }
+            }
+
             console.log(`Found ${files.length} files in filesystem scan`);
             return absoluteFiles;
-            
+
         } catch (error) {
             console.error('Filesystem scan failed:', error);
-            return [];
+            throw error;
         }
     }
 
@@ -141,29 +157,31 @@ export class FileScannerV2 {
      * @returns Git status information
      */
     private async getGitStatus(relativePath: string): Promise<{
+        deleted?: string[];
         staged: string[];
         unstaged: string[];
         untracked: string[];
     }> {
         try {
-            const status = await this.git.status();
-            
+            const status = await this.git.status(['--untracked-files=all']);
+
             // Filter files to only include those in our scan path
             const filterByPath = (files: string[]) => {
                 return files
-                    .filter(file => file.startsWith(relativePath))
+                    .filter(file => isInside(path.resolve(this.hexoPath, relativePath), path.resolve(this.hexoPath, file)))
                     .map(file => path.resolve(this.hexoPath, file));
             };
-            
+
             return {
+                deleted: filterByPath(status.deleted),
                 staged: filterByPath(status.staged),
                 unstaged: filterByPath([...status.modified, ...status.deleted]),
                 untracked: filterByPath(status.not_added)
             };
-            
+
         } catch (error) {
             console.error('Git status check failed:', error);
-            return { staged: [], unstaged: [], untracked: [] };
+            throw error;
         }
     }
 
@@ -183,30 +201,11 @@ export class FileScannerV2 {
         modifiedFiles: string[];
         untrackedFiles: string[];
     }> {
-        const gitKnownFiles = new Set([
-            ...gitFiles.staged,
-            ...gitFiles.unstaged,
-            ...gitFiles.untracked
-        ]);
-
-        // Check which files git has never seen
-        const newFiles: string[] = [];
-        const modifiedFiles: string[] = [];
-        
-        for (const file of allFiles) {
-            if (!gitKnownFiles.has(file)) {
-                // This is a truly new file that git doesn't know about
-                newFiles.push(file);
-            } else if (gitFiles.unstaged.includes(file)) {
-                // This is a modified file
-                modifiedFiles.push(file);
-            }
-        }
-        
+        const present = new Set(allFiles);
         return {
-            newFiles,
-            modifiedFiles,
-            untrackedFiles: gitFiles.untracked
+            newFiles: gitFiles.untracked.filter(file => present.has(file)),
+            modifiedFiles: [...new Set([...gitFiles.staged, ...gitFiles.unstaged])].filter(file => present.has(file)),
+            untrackedFiles: gitFiles.untracked.filter(file => present.has(file))
         };
     }
 
@@ -224,18 +223,19 @@ export class FileScannerV2 {
         hasValidFrontMatter: boolean;
     }>> {
         const metadata = [];
-        
+
         for (const filePath of filePaths) {
+            if (!isMarkdown(filePath)) continue;
             try {
                 const stats = await fs.stat(filePath);
-                
+
                 // Check if file has front matter
                 const content = await fs.readFile(filePath, 'utf8');
                 const hasValidFrontMatter = this.hasValidFrontMatter(content);
-                
+
                 // Consider file "new" if created recently (within last 5 minutes)
                 const isNew = (Date.now() - stats.ctime.getTime()) < (5 * 60 * 1000);
-                
+
                 metadata.push({
                     path: filePath,
                     size: stats.size,
@@ -244,12 +244,12 @@ export class FileScannerV2 {
                     isNew,
                     hasValidFrontMatter
                 });
-                
+
             } catch (error) {
                 console.error(`Failed to get metadata for ${filePath}:`, error);
             }
         }
-        
+
         return metadata;
     }
 
@@ -259,7 +259,7 @@ export class FileScannerV2 {
      * @returns True if has valid front matter
      */
     private hasValidFrontMatter(content: string): boolean {
-        return content.startsWith('---\n') && content.includes('\n---\n');
+        return /^---\r?\n/.test(content) && /\r?\n---(?:\r?\n|$)/.test(content);
     }
 
     /**
@@ -275,25 +275,28 @@ export class FileScannerV2 {
     }> {
         const result = await this.comprehensiveScan(scanPath);
         const metadata = await this.getFileMetadata(result.allFiles);
-        
+
         const missingFrontMatter: string[] = [];
         const missingDate: string[] = [];
         const missingTitle: string[] = [];
         const recentlyCreated: string[] = [];
-        
+
         for (const file of metadata) {
             if (!file.hasValidFrontMatter) {
                 missingFrontMatter.push(file.path);
             }
-            
+
             if (file.isNew) {
                 recentlyCreated.push(file.path);
             }
-            
-            // TODO: More detailed front matter analysis would go here
-            // This would require the gray-matter integration we'll implement next
+
+            if (file.hasValidFrontMatter) {
+                const parsed = matter(await fs.readFile(file.path, 'utf8')).data;
+                if (!parsed.date) missingDate.push(file.path);
+                if (!parsed.title) missingTitle.push(file.path);
+            }
         }
-        
+
         return {
             missingFrontMatter,
             missingDate,
@@ -319,28 +322,28 @@ export class FileScannerV2 {
         try {
             const result = await this.comprehensiveScan(scanPath);
             const metadata = await this.getFileMetadata(result.allFiles);
-            
+
             const addedFiles = metadata
                 .filter(file => file.ctime > lastScanTime)
                 .map(file => file.path);
-                
+
             const modifiedFiles = metadata
                 .filter(file => file.mtime > lastScanTime && file.ctime <= lastScanTime)
                 .map(file => file.path);
-            
+
             // Note: Detecting deleted files requires maintaining a previous state
             // This could be enhanced with a cache/database
-            const deletedFiles: string[] = [];
-            
+            const deletedFiles: string[] = result.deletedFiles;
+
             return {
                 addedFiles,
                 modifiedFiles,
                 deletedFiles
             };
-            
+
         } catch (error) {
             console.error('Incremental scan failed:', error);
-            return { addedFiles: [], modifiedFiles: [], deletedFiles: [] };
+            throw error;
         }
     }
 
@@ -351,7 +354,7 @@ export class FileScannerV2 {
      */
     async validateScanPath(scanPath?: string): Promise<boolean> {
         const fullPath = scanPath ? path.join(this.hexoPath, scanPath) : this.hexoPath;
-        
+
         try {
             const stats = await fs.stat(fullPath);
             return stats.isDirectory();

@@ -1,6 +1,8 @@
 import chokidar, { FSWatcher } from 'chokidar';
 import { EventEmitter } from 'events';
 import path from 'path';
+import { Stats } from 'fs';
+import picomatch from 'picomatch';
 
 /**
  * Modern, memory-safe file watcher using chokidar
@@ -33,8 +35,12 @@ export class FileWatcherV2 extends EventEmitter {
     private watchers = new Map<string, FSWatcher>();
     private callbacks = new Map<string, Set<FileWatchCallback>>();
     private isDisposed = false;
-    private debounceTimers = new Map<string, NodeJS.Timeout>();
+    private debounceTimers = new Map<string, { timer: NodeJS.Timeout; watchPath: string }>();
+    private readyPromises = new Map<string, Promise<void>>();
     private debounceMs: number;
+    private cancelReady = new Map<string, () => void>();
+    private callbackQueue: Promise<void> = Promise.resolve();
+    private disposePromise?: Promise<void>;
 
     constructor(debounceMs: number = 300) {
         super();
@@ -55,12 +61,12 @@ export class FileWatcherV2 extends EventEmitter {
         watchPath: string, 
         callback: FileWatchCallback, 
         options: WatchOptions = {}
-    ): () => void {
+    ): () => Promise<void> {
         if (this.isDisposed) {
             throw new Error('FileWatcher is disposed');
         }
 
-        const normalizedPath = path.normalize(watchPath);
+        const normalizedPath = path.resolve(watchPath);
         
         // Initialize callback set for this path
         if (!this.callbacks.has(normalizedPath)) {
@@ -72,16 +78,22 @@ export class FileWatcherV2 extends EventEmitter {
 
         // Create watcher if it doesn't exist
         if (!this.watchers.has(normalizedPath)) {
-            this.createWatcher(normalizedPath, options);
+            try {
+                this.createWatcher(normalizedPath, options);
+            } catch (error) {
+                this.callbacks.delete(normalizedPath);
+                throw error;
+            }
         }
 
         // Return unwatch function
-        return () => {
+        return async () => {
+            if (this.callbacks.get(normalizedPath) !== callbackSet) return;
             callbackSet.delete(callback);
             
             // If no more callbacks for this path, stop watching
             if (callbackSet.size === 0) {
-                this.stopWatching(normalizedPath);
+                await this.stopWatching(normalizedPath);
             }
         };
     }
@@ -90,15 +102,16 @@ export class FileWatcherV2 extends EventEmitter {
      * Create a chokidar watcher for the given path
      */
     private createWatcher(watchPath: string, options: WatchOptions): void {
+        const ignored = picomatch([
+            '**/node_modules/**', '**/.git/**', '**/.obsidian/**',
+            '**/.DS_Store', '**/Thumbs.db', '**/*.{tmp,swp,swo,bak}',
+            ...(options.ignore || [])
+        ], { dot: true });
         const chokidarOptions = {
-            ignored: options.ignore || [
-                '**/node_modules/**',
-                '**/.git/**',
-                '**/.DS_Store',
-                '**/Thumbs.db',
-                '**/*.tmp',
-                '**/.obsidian/**'
-            ],
+            ignored: (file: string) => {
+                const relative = path.relative(watchPath, file).split(path.sep).join('/');
+                return ignored(relative) || ignored(path.basename(file));
+            },
             ignoreInitial: options.ignoreInitial ?? true,
             persistent: options.persistent ?? true,
             followSymlinks: options.followSymlinks ?? false,
@@ -121,6 +134,21 @@ export class FileWatcherV2 extends EventEmitter {
             const watcher = chokidar.watch(watchPath, chokidarOptions);
             
             // Set up event handlers
+            const ready = new Promise<void>((resolve, reject) => {
+                const cleanup = () => {
+                    watcher.removeListener('ready', onReady);
+                    watcher.removeListener('error', onError);
+                    this.cancelReady.delete(watchPath);
+                };
+                const onReady = () => { cleanup(); resolve(); };
+                const onError = (error: unknown) => { cleanup(); reject(error); };
+                this.cancelReady.set(watchPath, () => onError(new Error('Watcher stopped before ready')));
+                watcher.once('ready', onReady);
+                watcher.once('error', onError);
+            });
+            // Avoid an unhandled rejection before the caller requests ready().
+            ready.catch(() => undefined);
+            this.readyPromises.set(watchPath, ready);
             this.setupWatcherEvents(watcher, watchPath);
             
             // Store watcher
@@ -130,7 +158,8 @@ export class FileWatcherV2 extends EventEmitter {
             
         } catch (error) {
             console.error(`Failed to create file watcher for ${watchPath}:`, error);
-            this.emit('error', error);
+            this.emit('watcherError', error, watchPath);
+            throw error;
         }
     }
 
@@ -140,37 +169,47 @@ export class FileWatcherV2 extends EventEmitter {
     private setupWatcherEvents(watcher: FSWatcher, watchPath: string): void {
         // File/directory added
         watcher.on('add', (filePath, stats) => {
+            if (this.isDisposed || this.watchers.get(watchPath) !== watcher) return;
             this.handleFileEvent('add', filePath, watchPath, stats);
         });
 
         // File changed
         watcher.on('change', (filePath, stats) => {
+            if (this.isDisposed || this.watchers.get(watchPath) !== watcher) return;
             this.handleFileEvent('change', filePath, watchPath, stats);
         });
 
         // File removed
         watcher.on('unlink', (filePath) => {
+            if (this.isDisposed || this.watchers.get(watchPath) !== watcher) return;
             this.handleFileEvent('unlink', filePath, watchPath);
         });
 
         // Directory added
         watcher.on('addDir', (dirPath, stats) => {
+            if (this.isDisposed || this.watchers.get(watchPath) !== watcher) return;
             this.handleFileEvent('addDir', dirPath, watchPath, stats);
         });
 
         // Directory removed
         watcher.on('unlinkDir', (dirPath) => {
+            if (this.isDisposed || this.watchers.get(watchPath) !== watcher) return;
             this.handleFileEvent('unlinkDir', dirPath, watchPath);
         });
 
         // Error handling
         watcher.on('error', (error) => {
             console.error(`File watcher error for ${watchPath}:`, error);
-            this.emit('error', error);
+            this.emit('watcherError', error, watchPath);
+            if (this.watchers.get(watchPath) !== watcher) return;
+            void this.stopWatching(watchPath).catch(closeError => {
+                this.emit('watcherError', closeError, watchPath);
+            });
         });
 
         // Ready event
         watcher.on('ready', () => {
+            if (this.isDisposed || this.watchers.get(watchPath) !== watcher) return;
             console.log(`File watcher ready for: ${watchPath}`);
             this.emit('ready', watchPath);
         });
@@ -183,15 +222,15 @@ export class FileWatcherV2 extends EventEmitter {
         type: FileChangeEvent['type'], 
         filePath: string, 
         watchPath: string, 
-        stats?: any
+        stats?: Stats
     ): void {
         // Create debounce key
-        const debounceKey = `${type}:${filePath}`;
+        const debounceKey = `${watchPath}:${filePath}`;
         
         // Clear existing timer
         const existingTimer = this.debounceTimers.get(debounceKey);
         if (existingTimer) {
-            clearTimeout(existingTimer);
+            clearTimeout(existingTimer.timer);
         }
         
         // Set new timer
@@ -200,7 +239,7 @@ export class FileWatcherV2 extends EventEmitter {
             this.processFileEvent(type, filePath, watchPath, stats);
         }, this.debounceMs);
         
-        this.debounceTimers.set(debounceKey, timer);
+        this.debounceTimers.set(debounceKey, { timer, watchPath });
     }
 
     /**
@@ -210,7 +249,7 @@ export class FileWatcherV2 extends EventEmitter {
         type: FileChangeEvent['type'], 
         filePath: string, 
         watchPath: string, 
-        stats?: any
+        stats?: Stats
     ): void {
         const event: FileChangeEvent = {
             type,
@@ -226,52 +265,49 @@ export class FileWatcherV2 extends EventEmitter {
         const callbacks = this.callbacks.get(watchPath);
         if (!callbacks) return;
 
-        // Call all callbacks
-        for (const callback of callbacks) {
-            try {
-                const result = callback(event);
-                
-                // Handle async callbacks
-                if (result instanceof Promise) {
-                    result.catch(error => {
-                        console.error('File watch callback error:', error);
-                        this.emit('callbackError', error, event);
-                    });
+        // Serialize callbacks, including across paths. Never start queued work after
+        // unwatch/re-watch: the callback set also acts as a generation token.
+        const registered = Array.from(callbacks);
+        this.callbackQueue = this.callbackQueue.then(async () => {
+            const active = () => !this.isDisposed && this.callbacks.get(watchPath) === callbacks;
+            for (const callback of registered) {
+                if (!active()) return;
+                if (!callbacks.has(callback)) continue;
+                try {
+                    await callback(event);
+                } catch (error) {
+                    this.emit('callbackError', error, event);
                 }
-            } catch (error) {
-                console.error('File watch callback error:', error);
-                this.emit('callbackError', error, event);
             }
-        }
-
-        // Emit event for general listeners
-        this.emit('fileChange', event);
+            if (active()) this.emit('fileChange', event);
+        }).catch(error => {
+            // A consumer event listener must not poison the queue or leak a rejection.
+            console.error('File watch listener error:', error);
+        });
     }
 
     /**
      * Stop watching a specific path
      */
-    private stopWatching(watchPath: string): void {
+    private async stopWatching(watchPath: string): Promise<void> {
         const watcher = this.watchers.get(watchPath);
-        if (watcher) {
-            watcher.close().then(() => {
-                console.log(`File watcher closed for: ${watchPath}`);
-            }).catch(error => {
-                console.error(`Error closing file watcher for ${watchPath}:`, error);
-            });
-            
-            this.watchers.delete(watchPath);
-        }
-        
+        this.watchers.delete(watchPath);
         this.callbacks.delete(watchPath);
-        
-        // Clear any pending debounce timers for this path
-        for (const [key, timer] of this.debounceTimers.entries()) {
-            if (key.includes(watchPath)) {
-                clearTimeout(timer);
+        this.cancelReady.get(watchPath)?.();
+        this.readyPromises.delete(watchPath);
+        for (const [key, pending] of this.debounceTimers.entries()) {
+            if (pending.watchPath === watchPath) {
+                clearTimeout(pending.timer);
                 this.debounceTimers.delete(key);
             }
         }
+        if (watcher) await watcher.close();
+    }
+
+    async ready(watchPath: string): Promise<void> {
+        const ready = this.readyPromises.get(path.resolve(watchPath));
+        if (!ready) throw new Error('Path is not watched');
+        await ready;
     }
 
     /**
@@ -285,7 +321,7 @@ export class FileWatcherV2 extends EventEmitter {
      * Check if a path is being watched
      */
     isWatching(watchPath: string): boolean {
-        return this.watchers.has(path.normalize(watchPath));
+        return this.watchers.has(path.resolve(watchPath));
     }
 
     /**
@@ -311,36 +347,17 @@ export class FileWatcherV2 extends EventEmitter {
     /**
      * Dispose all watchers and clean up resources
      */
-    async dispose(): Promise<void> {
-        if (this.isDisposed) {
-            return;
-        }
-
+    dispose(): Promise<void> {
+        if (this.disposePromise) return this.disposePromise;
         this.isDisposed = true;
-
-        // Clear all debounce timers
-        for (const timer of this.debounceTimers.values()) {
-            clearTimeout(timer);
-        }
-        this.debounceTimers.clear();
-
-        // Close all watchers
-        const closePromises = Array.from(this.watchers.entries()).map(([path, watcher]) => {
-            return watcher.close().catch(error => {
-                console.error(`Error closing watcher for ${path}:`, error);
-            });
+        // Invalidate callbacks and readiness synchronously before waiting on close.
+        const closes = Array.from(this.watchers.keys()).map(watchPath => this.stopWatching(watchPath));
+        this.disposePromise = Promise.allSettled(closes).then(results => {
+            this.removeAllListeners();
+            const failed = results.find(result => result.status === 'rejected');
+            if (failed?.status === 'rejected') throw failed.reason;
         });
-
-        await Promise.all(closePromises);
-
-        // Clear collections
-        this.watchers.clear();
-        this.callbacks.clear();
-
-        // Remove all event listeners
-        this.removeAllListeners();
-
-        console.log('FileWatcher disposed successfully');
+        return this.disposePromise;
     }
 }
 

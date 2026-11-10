@@ -1,11 +1,11 @@
-import { Notice, Plugin } from "obsidian";
+import { FileSystemAdapter, Notice, Plugin, TFile } from "obsidian";
 import path from "path";
 
 // Modern services
 import { SymlinkServiceV2 } from "./services/SymlinkServiceV2";
 import { FileWatcherV2, FileChangeEvent } from "./services/FileWatcherV2";
 import { FileScannerV2 } from "./services/FileScannerV2";
-import { FrontMatterProcessorV2, createHexoFrontMatterProcessor } from "./services/FrontMatterProcessorV2";
+import { FrontMatterProcessorV2, createHexoFrontMatterProcessor, ProcessingResult } from "./services/FrontMatterProcessorV2";
 
 // Legacy compatibility
 import { HexoIntegrationSettings } from "./types";
@@ -13,11 +13,14 @@ import { DEFAULT_SETTINGS } from "./constants";
 import HexoIntegrationSettingsTab from "./settings/hexoIntegrationSettingsTab";
 
 // Git operations
-import { simpleGit, SimpleGit } from 'simple-git';
+import { SafeGitService } from './services/SafeGitService';
+import { assertManagedPath, isMarkdown, isInside } from './services/ManagedPaths';
+import { promises as fs } from 'fs';
+import { validateVaultContent, preflightVaultContent, prepareReverseContentLink, VaultContentConfig } from './services/VaultContentMode';
 
 /**
  * Unified Hexo Integration Plugin - V3
- * Addresses all root cause issues with clean, modern architecture
+ * Coordinates filesystem and Git work through a serial operation queue
  */
 export default class HexoIntegrationPluginV3 extends Plugin {
     // Settings
@@ -26,14 +29,20 @@ export default class HexoIntegrationPluginV3 extends Plugin {
     // Modern services
     private symlinkService: SymlinkServiceV2;
     private fileWatcher: FileWatcherV2;
-    private fileScanner: FileScannerV2;
+    private fileScanner: FileScannerV2 | undefined;
     private frontMatterProcessor: FrontMatterProcessorV2;
-    private git: SimpleGit;
+    private git: SafeGitService | undefined;
+    private activeSettings: HexoIntegrationSettings;
+    private work: Promise<unknown> = Promise.resolve();
+    private disposed = false;
+    private gitRoot = '';
+    private postsRoot = '';
+    private scanPath = 'source/_posts';
     
     // State management
     private isInitialized = false;
     private isWatching = false;
-    private unwatchFunctions: Array<() => void> = [];
+    private unwatchFunctions: Array<() => Promise<void>> = [];
     private lastScanTime = new Date();
     
     // Statistics
@@ -57,9 +66,10 @@ export default class HexoIntegrationPluginV3 extends Plugin {
             // Step 3: Setup UI
             this.setupUI();
             
+            this.isInitialized = true;
             // Step 4: Initialize blog integration if configured
-            if (this.settings.hexoSourcePath) {
-                await this.initializeBlogIntegration();
+            if (this.isConfigured(this.settings)) {
+                await this.enqueue(() => this.initializeBlogIntegration(this.settings.contentMode !== 'vault' || this.settings.autoSync));
             } else {
                 this.showConfigurationNotice();
             }
@@ -68,6 +78,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
             console.log('✅ Hexo Integration Plugin V3 loaded successfully');
             
         } catch (error) {
+            await this.stopWatching();
             console.error('❌ Failed to load Hexo Integration Plugin V3:', error);
             new Notice(
                 `⚠️ Hexo Integration Plugin failed to load\n\n` +
@@ -98,6 +109,11 @@ export default class HexoIntegrationPluginV3 extends Plugin {
         
         // Initialize file watcher
         this.fileWatcher = new FileWatcherV2(300); // 300ms debounce
+        this.fileWatcher.on('watcherError', error => {
+            this.isWatching = false;
+            this.stats.errors++;
+            new Notice(`File watching failed: ${error.message}. Use Sync Now after correcting the problem.`);
+        });
         
         // Initialize front-matter processor
         this.frontMatterProcessor = createHexoFrontMatterProcessor({
@@ -112,39 +128,91 @@ export default class HexoIntegrationPluginV3 extends Plugin {
     /**
      * Initialize blog-specific integration
      */
-    private async initializeBlogIntegration(): Promise<void> {
-        if (!this.settings.hexoSourcePath) {
-            throw new Error('Hexo source path not configured');
+    private async initializeBlogIntegration(initialScan = true): Promise<void> {
+        await this.stopWatching();
+        this.git = undefined;
+        this.fileScanner = undefined;
+        this.activeSettings = { ...this.settings };
+        this.validateSettings(this.activeSettings);
+        if (!this.isConfigured(this.activeSettings)) return;
+        if (this.activeSettings.contentMode === 'vault') {
+            const roots = await validateVaultContent(this.vaultContentConfig());
+            this.gitRoot = roots.gitRoot;
+            this.postsRoot = roots.postsRoot;
+            this.scanPath = path.relative(this.gitRoot, this.postsRoot);
+        } else {
+            this.gitRoot = this.activeSettings.hexoSourcePath;
+            this.postsRoot = path.join(this.gitRoot, 'source', '_posts');
+            this.scanPath = 'source/_posts';
+            if (!(await fs.stat(this.postsRoot)).isDirectory()) throw new Error('Hexo source/_posts directory is missing');
+            if (!isInside(await fs.realpath(this.gitRoot), await fs.realpath(this.postsRoot))) throw new Error('Posts directory must stay inside the repository');
         }
+        this.frontMatterProcessor = createHexoFrontMatterProcessor({
+            autoAddDate: this.activeSettings.autoAddDate,
+            autoGenerateTitle: this.activeSettings.autoGenerateTitle,
+            requiredFields: []
+        });
+        await this.initializeGitOperations();
+        if (this.activeSettings.contentMode !== 'vault') await this.setupBlogLink();
+        this.fileScanner = new FileScannerV2(this.gitRoot);
+        if (this.activeSettings.autoSync) await this.startWatching();
+        // Register the watcher first; events are serialized behind this initial scan.
+        if (initialScan) await this.performInitialScan();
+    }
 
-        try {
-            // Step 1: Validate and setup symlink
-            await this.setupBlogLink();
-            
-            // Step 2: Initialize git operations
-            await this.initializeGitOperations();
-            
-            // Step 3: Initialize file scanner
-            this.fileScanner = new FileScannerV2(this.settings.hexoSourcePath);
-            
-            // Step 4: Perform initial scan and cleanup
-            await this.performInitialScan();
-            
-            // Step 5: Start file watching if auto-sync is enabled
-            if (this.settings.autoSync) {
-                await this.startWatching();
-            }
-            
-            console.log('Blog integration initialized successfully');
-            
-        } catch (error) {
-            console.error('Failed to initialize blog integration:', error);
-            throw error;
+    private isConfigured(settings: HexoIntegrationSettings): boolean {
+        return !!(settings.contentMode === 'vault' ? settings.vaultContentPath : settings.hexoSourcePath);
+    }
+
+    private vaultContentConfig(): VaultContentConfig {
+        const adapter = this.app.vault.adapter;
+        if (!(adapter instanceof FileSystemAdapter)) throw new Error('Vault content mode requires the desktop filesystem adapter');
+        return { vaultRoot: adapter.getBasePath(), contentRoot: this.activeSettings.vaultContentPath || '',
+            gitRoot: this.activeSettings.contentGitPath || '', hexoRoot: this.activeSettings.hexoEnginePath || undefined };
+    }
+
+    /** Uses Obsidian's coordinated write; never overwrite content changed after async planning. */
+    private async processVaultFiles(files: string[]): Promise<ProcessingResult[]> {
+        const config = this.vaultContentConfig();
+        const results: ProcessingResult[] = [];
+        for (const absolute of files) {
+            const relative = path.relative(config.vaultRoot, absolute).split(path.sep).join('/');
+            const file = this.app.vault.getAbstractFileByPath(relative);
+            if (!(file instanceof TFile)) throw new Error(`Post not indexed by Obsidian yet: ${relative}. Retry Sync Now.`);
+            const original = await this.app.vault.read(file);
+            if (original.includes('\0') || original.includes('\uFFFD')) throw new Error('Refusing binary or undecodable Markdown');
+            const result = await this.frontMatterProcessor.processContent(original, absolute);
+            if (!result.success) throw new Error(result.errors.join('; '));
+            if (result.modified) await this.app.vault.process(file, current => {
+                if (current !== original) throw new Error('Post changed during processing; retry instead of overwriting');
+                return result.processedContent;
+            });
+            results.push(result);
         }
+        return results;
+    }
+
+    /** Explicit setup only: no content migration, Git initialization, builds or publication. */
+    async prepareVaultBuild(): Promise<void> {
+        await this.enqueue(async () => {
+            if (this.activeSettings.contentMode !== 'vault') throw new Error('Select vault content mode first');
+            await preflightVaultContent(this.vaultContentConfig());
+            const result = await prepareReverseContentLink(this.vaultContentConfig());
+            new Notice(`Build content link ready: ${result.linkPath}. Set Hexo source_dir to content. Nothing was built or published.`, 15000);
+        });
+    }
+
+    private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+        const task = this.work.then(() => {
+            if (this.disposed) throw new Error('Plugin is unloaded');
+            return operation();
+        });
+        this.work = task.catch(() => undefined);
+        return task;
     }
 
     /**
-     * Setup blog symlink with safe permission handling
+     * Setup an inert blog reference without exposing an external tree to the vault indexer
      */
     private async setupBlogLink(): Promise<void> {
         try {
@@ -152,23 +220,21 @@ export default class HexoIntegrationPluginV3 extends Plugin {
             const validation = await this.symlinkService.validateSymlink(this.settings.hexoSourcePath);
             
             if (validation.needsRecreation) {
-                console.log('Creating/updating blog link...');
+                console.log('Creating safe blog reference...');
                 const result = await this.symlinkService.createSafeSymlink(this.settings.hexoSourcePath);
                 
                 if (!result.success) {
-                    console.warn('Symlink creation failed:', result.message);
-                    if (!result.fallback) {
-                        throw new Error(`Failed to create blog link: ${result.message}`);
-                    }
+                    console.warn('Blog reference creation failed:', result.message);
+                    throw new Error(`Failed to create blog reference: ${result.message}`);
                 }
             } else {
-                console.log(`Blog link is valid (${validation.type})`);
+                console.log(`Blog reference is valid (${validation.type})`);
             }
             
         } catch (error) {
-            console.error('Blog link setup failed:', error);
+            console.error('Blog reference setup failed:', error);
             // Don't throw - allow plugin to continue with reduced functionality
-            new Notice(`⚠️ Blog link setup failed: ${error.message}\nSome features may be limited.`);
+            new Notice(`⚠️ Blog reference setup failed: ${error.message}\nExternal posts are still synced directly; existing external links must be migrated manually.`);
         }
     }
 
@@ -176,74 +242,36 @@ export default class HexoIntegrationPluginV3 extends Plugin {
      * Initialize git operations
      */
     private async initializeGitOperations(): Promise<void> {
-        try {
-            this.git = simpleGit(this.settings.hexoSourcePath);
-            
-            // Verify it's a git repository
-            const isRepo = await this.git.checkIsRepo();
-            if (!isRepo) {
-                throw new Error('Hexo source path is not a git repository');
-            }
-            
-            console.log('Git operations initialized');
-            
-        } catch (error) {
-            console.error('Git initialization failed:', error);
-            // Don't throw - allow plugin to work without git
-            new Notice(`⚠️ Git not available: ${error.message}\nCommit features will be disabled.`);
-        }
+        this.git = undefined;
+        const git = new SafeGitService(this.gitRoot, this.postsRoot);
+        await git.validate();
+        this.git = git;
     }
 
     /**
      * Perform initial scan and process files
      */
     private async performInitialScan(): Promise<void> {
-        if (!this.fileScanner) return;
-        
-        try {
-            console.log('Performing initial file scan...');
-            
-            const scanResult = await this.fileScanner.comprehensiveScan();
-            const filesNeedingAttention = await this.fileScanner.findFilesNeedingAttention();
-            
-            console.log(`Found ${scanResult.allFiles.length} files`);
-            console.log(`New files: ${scanResult.newFiles.length}`);
-            console.log(`Modified files: ${scanResult.modifiedFiles.length}`);
-            console.log(`Files needing attention: ${filesNeedingAttention.missingFrontMatter.length + filesNeedingAttention.recentlyCreated.length}`);
-            
-            // Process files that need front-matter attention
-            const filesToProcess = [
-                ...filesNeedingAttention.missingFrontMatter,
-                ...filesNeedingAttention.recentlyCreated
-            ];
-            
-            if (filesToProcess.length > 0) {
-                await this.processFrontMatterBatch(filesToProcess);
-            }
-            
-            // Commit new/modified files if git is available and auto-commit is enabled
-            if (this.git && this.settings.autoCommit && (scanResult.newFiles.length > 0 || scanResult.modifiedFiles.length > 0)) {
-                await this.commitChanges([...scanResult.newFiles, ...scanResult.modifiedFiles]);
-            }
-            
-            this.lastScanTime = new Date();
-            
-        } catch (error) {
-            console.error('Initial scan failed:', error);
-            // Don't throw - allow plugin to continue
+        if (!this.fileScanner) throw new Error('Configure a valid Hexo repository before syncing');
+        const scanResult = await this.fileScanner.comprehensiveScan(this.scanPath, { includePatterns: ['**/*'] });
+        const files = [...new Set([...scanResult.newFiles, ...scanResult.modifiedFiles])];
+        await this.processFrontMatterBatch(files.filter(isMarkdown));
+        if (this.git && this.activeSettings.autoCommit) {
+            await this.commitChanges([...files, ...scanResult.deletedFiles]);
         }
+        this.lastScanTime = new Date();
     }
 
     /**
      * Start file watching
      */
     private async startWatching(): Promise<void> {
-        if (!this.settings.hexoSourcePath || this.isWatching) {
+        if (!this.isConfigured(this.activeSettings) || this.isWatching) {
             return;
         }
 
         try {
-            const postsPath = path.join(this.settings.hexoSourcePath, 'source', '_posts');
+            const postsPath = this.postsRoot;
             
             // Setup file watcher
             const unwatch = this.fileWatcher.watch(
@@ -260,6 +288,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
             );
             
             this.unwatchFunctions.push(unwatch);
+            await this.fileWatcher.ready(postsPath);
             this.isWatching = true;
             
             console.log('File watching started');
@@ -268,6 +297,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
         } catch (error) {
             console.error('Failed to start file watching:', error);
             new Notice(`⚠️ Failed to start file watching: ${error.message}`);
+            throw error;
         }
     }
 
@@ -275,34 +305,20 @@ export default class HexoIntegrationPluginV3 extends Plugin {
      * Handle file change events
      */
     private async handleFileChange(event: FileChangeEvent): Promise<void> {
-        console.log(`File ${event.type}: ${path.basename(event.path)}`);
-        
-        try {
-            if (event.type === 'add' || event.type === 'change') {
-                // Process front-matter
-                const result = await this.frontMatterProcessor.processFile(event.path);
-                
-                if (result.success) {
-                    this.stats.filesProcessed++;
-                    
-                    if (result.modified) {
-                        console.log(`Updated front-matter for ${path.basename(event.path)}`);
-                    }
-                    
-                    // Auto-commit if enabled
-                    if (this.git && this.settings.autoCommit) {
-                        await this.commitChanges([event.path]);
-                    }
-                } else {
-                    this.stats.errors++;
-                    console.error(`Failed to process ${event.path}:`, result.errors);
-                }
+        if (event.type === 'addDir' || event.type === 'unlinkDir') return;
+        const settingsAtEvent = this.activeSettings;
+        await this.enqueue(async () => {
+            if (settingsAtEvent !== this.activeSettings) return;
+            const posts = this.postsRoot;
+            await assertManagedPath(posts, event.path, event.type === 'unlink');
+            if (event.type !== 'unlink' && isMarkdown(event.path)) {
+                await this.processFrontMatterBatch([event.path]);
             }
-            
-        } catch (error) {
+            if (this.git && this.activeSettings.autoCommit) await this.commitChanges([event.path]);
+        }).catch(error => {
             this.stats.errors++;
-            console.error('Error handling file change:', error);
-        }
+            new Notice(`Sync failed: ${error.message}`);
+        });
     }
 
     /**
@@ -314,8 +330,18 @@ export default class HexoIntegrationPluginV3 extends Plugin {
         try {
             console.log(`Processing front-matter for ${filePaths.length} files...`);
             
-            const results = await this.frontMatterProcessor.processFiles(filePaths);
+            const files = [...new Set(filePaths)].filter(isMarkdown);
+            const posts = this.postsRoot;
+            for (const file of files) await assertManagedPath(posts, file);
+            const results = this.activeSettings.contentMode === 'vault'
+                ? await this.processVaultFiles(files)
+                : await this.frontMatterProcessor.processFiles(files);
             const summary = this.frontMatterProcessor.getSummary(results);
+            const recoveryWarnings = results.flatMap(result => result.warnings).filter(warning => warning.startsWith('Original retained'));
+            if (recoveryWarnings.length) {
+                console.warn('Front-matter recovery locations:', recoveryWarnings);
+                new Notice(`${recoveryWarnings.length} post backup(s). Close and reopen external editors before further editing. ${recoveryWarnings[0]}${recoveryWarnings.length > 1 ? ' More locations are listed in the developer console.' : ''}`, 20000);
+            }
             
             this.stats.filesProcessed += summary.successful;
             this.stats.errors += summary.errors;
@@ -326,9 +352,11 @@ export default class HexoIntegrationPluginV3 extends Plugin {
             }
             
             console.log('Front-matter processing summary:', summary);
+            if (summary.errors > 0) throw new Error('Some posts could not be processed; no automatic commit was made');
             
         } catch (error) {
             console.error('Batch front-matter processing failed:', error);
+            throw error;
         }
     }
 
@@ -336,40 +364,11 @@ export default class HexoIntegrationPluginV3 extends Plugin {
      * Commit changes to git
      */
     private async commitChanges(filePaths: string[]): Promise<void> {
-        if (!this.git || filePaths.length === 0) return;
-        
-        try {
-            // Add files to git
-            await this.git.add(filePaths);
-            
-            // Check if there are changes to commit
-            const status = await this.git.status();
-            if (status.staged.length === 0) {
-                console.log('No changes to commit');
-                return;
-            }
-            
-            // Create commit message
-            const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
-            const fileNames = filePaths.map(p => path.basename(p)).join(', ');
-            const message = `Update posts from Obsidian: ${fileNames} at ${timestamp}`;
-            
-            // Commit
-            await this.git.commit(message);
-            
-            this.stats.lastSync = new Date();
-            console.log('Changes committed successfully');
-            
-            // Auto-push if enabled
-            if (this.settings.autoPush) {
-                await this.git.push();
-                console.log('Changes pushed to remote');
-            }
-            
-        } catch (error) {
-            console.error('Git commit failed:', error);
-            this.stats.errors++;
-        }
+        if (!this.git) throw new Error('Git is not initialized');
+        if (this.activeSettings.contentMode === 'vault') await preflightVaultContent(this.vaultContentConfig());
+        const message = `Update posts from Obsidian at ${new Date().toISOString()}`;
+        const outcome = await this.git.commit(filePaths, message, this.activeSettings.autoPush);
+        if (outcome.committed || outcome.pushed) this.stats.lastSync = new Date();
     }
 
     /**
@@ -380,6 +379,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
         this.addSettingTab(new HexoIntegrationSettingsTab(this.app, this));
         
         // Add commands
+        this.addCommand({id: 'prepare-vault-build', name: 'Prepare Vault Content Build Link', callback: () => this.prepareVaultBuild().catch(error => { new Notice(`Build setup failed: ${error.message}`); })});
         this.addCommand({
             id: 'sync-now',
             name: 'Sync Now',
@@ -406,7 +406,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
         
         this.addCommand({
             id: 'recreate-blog-link',
-            name: 'Recreate Blog Link',
+            name: 'Create Safe Blog Reference',
             callback: () => this.handleRecreateBlogLink()
         });
     }
@@ -423,7 +423,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
         new Notice('🔄 Starting manual sync...');
         
         try {
-            await this.performInitialScan();
+            await this.enqueue(() => this.performInitialScan());
             new Notice('✅ Manual sync completed');
         } catch (error) {
             console.error('Manual sync failed:', error);
@@ -435,12 +435,6 @@ export default class HexoIntegrationPluginV3 extends Plugin {
         this.settings.autoSync = !this.settings.autoSync;
         await this.saveSettings();
         
-        if (this.settings.autoSync) {
-            await this.startWatching();
-        } else {
-            await this.stopWatching();
-        }
-        
         new Notice(`Auto-sync ${this.settings.autoSync ? 'enabled' : 'disabled'}`);
     }
     
@@ -451,8 +445,10 @@ export default class HexoIntegrationPluginV3 extends Plugin {
         }
         
         try {
-            const scanResult = await this.fileScanner.comprehensiveScan();
-            await this.processFrontMatterBatch(scanResult.allFiles);
+            await this.enqueue(async () => {
+                const scanResult = await this.fileScanner!.comprehensiveScan(this.scanPath);
+                await this.processFrontMatterBatch(scanResult.allFiles);
+            });
         } catch (error) {
             console.error('Process all posts failed:', error);
             new Notice(`❌ Failed to process posts: ${error.message}`);
@@ -478,6 +474,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
     }
     
     private async handleRecreateBlogLink(): Promise<void> {
+        if (this.settings.contentMode === 'vault') { new Notice('Vault mode does not create blog references. Use Prepare Vault Content Build Link.'); return; }
         if (!this.settings.hexoSourcePath) {
             new Notice('Please configure Hexo source path first');
             return;
@@ -486,9 +483,9 @@ export default class HexoIntegrationPluginV3 extends Plugin {
         try {
             const result = await this.symlinkService.createSafeSymlink(this.settings.hexoSourcePath);
             if (result.success) {
-                new Notice('✅ Blog link recreated successfully');
+                new Notice('✅ Safe blog reference ready (not a live external folder)');
             } else {
-                new Notice(`❌ Failed to recreate blog link: ${result.message}`);
+                new Notice(`❌ Blog reference not changed: ${result.message}`);
             }
         } catch (error) {
             console.error('Recreate blog link failed:', error);
@@ -500,12 +497,11 @@ export default class HexoIntegrationPluginV3 extends Plugin {
      * Stop file watching
      */
     private async stopWatching(): Promise<void> {
-        if (!this.isWatching) return;
         
         // Call all unwatch functions
         for (const unwatch of this.unwatchFunctions) {
             try {
-                unwatch();
+                await unwatch();
             } catch (error) {
                 console.error('Error calling unwatch function:', error);
             }
@@ -533,8 +529,10 @@ export default class HexoIntegrationPluginV3 extends Plugin {
      * Cleanup resources
      */
     private async cleanup(): Promise<void> {
+        this.disposed = true;
         // Stop file watching
         await this.stopWatching();
+        await this.work;
         
         // Dispose services
         if (this.fileWatcher) {
@@ -551,20 +549,29 @@ export default class HexoIntegrationPluginV3 extends Plugin {
         this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
     }
 
+    async changeContentMode(mode: 'external' | 'vault'): Promise<void> {
+        await this.enqueue(async () => {
+            await this.stopWatching();
+            this.git = undefined;
+            this.fileScanner = undefined;
+            this.settings.contentMode = mode;
+            this.settings.autoSync = false;
+            this.settings.autoCommit = false;
+            this.settings.autoPush = false;
+            // Invalidate any watcher callback queued behind this transition.
+            this.activeSettings = { ...this.settings };
+        });
+    }
+
     async saveSettings(): Promise<void> {
-        // Validate settings before saving
-        this.validateSettings(this.settings);
-        
-        await this.saveData(this.settings);
-        
-        // Reinitialize if needed
-        if (this.isInitialized && this.settings.hexoSourcePath) {
-            try {
-                await this.initializeBlogIntegration();
-            } catch (error) {
-                console.error('Failed to reinitialize after settings change:', error);
-            }
-        }
+        await this.enqueue(async () => {
+            await this.stopWatching();
+            this.git = undefined;
+            this.fileScanner = undefined;
+            this.validateSettings(this.settings);
+            await this.saveData(this.settings);
+            if (this.isInitialized) await this.initializeBlogIntegration(false);
+        });
     }
 
     /**
@@ -572,11 +579,12 @@ export default class HexoIntegrationPluginV3 extends Plugin {
      * @param settings Settings to validate
      */
     private validateSettings(settings: HexoIntegrationSettings): void {
+        if (settings.contentMode && !['vault', 'external'].includes(settings.contentMode)) throw new Error('Unknown content mode');
         if (settings.hexoSourcePath && settings.hexoSourcePath.trim() === '') {
             throw new Error('Hexo source path cannot be empty');
         }
         
-        if (settings.hexoSourcePath && !settings.hexoSourcePath.startsWith('/')) {
+        if (settings.hexoSourcePath && !path.isAbsolute(settings.hexoSourcePath)) {
             throw new Error('Hexo source path must be an absolute path');
         }
         
@@ -599,11 +607,12 @@ export default class HexoIntegrationPluginV3 extends Plugin {
     }
 
     async createSymlink(hexoSourcePath: string): Promise<string> {
+        if (this.settings.contentMode === 'vault') return 'Vault mode never creates an external link inside the vault. Use Prepare Vault Content Build Link.';
         try {
             const result = await this.symlinkService.createSafeSymlink(hexoSourcePath);
-            return result.success ? 'success' : 'failure';
+            return result.message;
         } catch (error) {
-            console.error('Symlink creation failed:', error);
+            console.error('Blog reference creation failed:', error);
             return 'failure';
         }
     }

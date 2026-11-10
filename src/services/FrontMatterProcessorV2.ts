@@ -1,6 +1,8 @@
 import matter from 'gray-matter';
 import { promises as fs } from 'fs';
 import path from 'path';
+import { randomBytes } from 'crypto';
+import { isMarkdown } from './ManagedPaths';
 
 /**
  * Robust front-matter processor using gray-matter
@@ -50,9 +52,7 @@ export class FrontMatterProcessorV2 {
         autoGenerateSlug: false,
         requiredFields: ['title', 'date'],
         preserveExisting: true,
-        defaultValues: {
-            draft: false
-        }
+        defaultValues: {}
     };
 
     constructor(private options: ProcessingOptions = {}) {
@@ -70,14 +70,61 @@ export class FrontMatterProcessorV2 {
         
         try {
             // Read file content
-            const originalContent = await fs.readFile(filePath, 'utf8');
+            if (!isMarkdown(filePath)) throw new Error('Front-matter processing is restricted to Markdown files');
+            const stat = await fs.lstat(filePath);
+            if (!stat.isFile() || stat.nlink > 1) throw new Error('Refusing non-regular or hard-linked file');
+            const bytes = await fs.readFile(filePath);
+            const originalContent = bytes.toString('utf8');
+            if (bytes.includes(0) || !Buffer.from(originalContent, 'utf8').equals(bytes)) {
+                throw new Error('Refusing non-UTF-8 or binary content');
+            }
             
             // Process content
             const result = await this.processContent(originalContent, filePath, effectiveOptions);
             
             // Write back if modified
             if (result.modified && result.success) {
-                await fs.writeFile(filePath, result.processedContent, 'utf8');
+                const temporary = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${randomBytes(8).toString('hex')}.tmp`);
+                try {
+                    await fs.writeFile(temporary, result.processedContent, { encoding: 'utf8', flag: 'wx', mode: stat.mode });
+                    const current = await fs.lstat(filePath);
+                    if (current.ino !== stat.ino || current.mtimeMs !== stat.mtimeMs || !(await fs.readFile(filePath)).equals(bytes)) {
+                        throw new Error('File changed while processing; refusing to overwrite newer content');
+                    }
+                    // Retain the actual inode moved out of the way, not an earlier snapshot.
+                    // An editor writing via an already-open descriptor will still write into
+                    // this recovery file. Never overwrite a competing new destination.
+                    const recoveryDir = await fs.mkdtemp(path.join(path.dirname(filePath), '.hexo-frontmatter-backup-'));
+                    const recovery = path.join(recoveryDir, path.basename(filePath) + '.bak');
+                    let moved = false;
+                    try {
+                        // Verify hard-link support before moving the user's original.
+                        const probe = path.join(recoveryDir, 'link-probe.tmp');
+                        await fs.link(temporary, probe);
+                        await fs.unlink(probe);
+                        await fs.rename(filePath, recovery);
+                        moved = true;
+                        const retained = await fs.lstat(recovery);
+                        if (!retained.isFile() || retained.ino !== stat.ino || !(await fs.readFile(recovery)).equals(bytes)) {
+                            throw new Error('Concurrent edit detected in retained original');
+                        }
+                        // link is atomic create-if-absent; unlike rename it cannot clobber
+                        // a file the editor recreates after we move the original.
+                        await fs.link(temporary, filePath);
+                        result.warnings.push(`Original retained for recovery: ${recovery}. Open editors may write later changes there; inspect before removing.`);
+                    } catch (error) {
+                        if (moved) {
+                            // Restore only an absent destination. A competing writer wins.
+                            await fs.link(recovery, filePath).catch(restoreError => {
+                                if (restoreError.code !== 'EEXIST') console.error(`Restore failed; recover from ${recovery}:`, restoreError);
+                            });
+                        }
+                        // Preserve recovery context on runtimes predating ErrorOptions.cause.
+                        throw Object.assign(new Error(`${error.message}; original recovery location: ${recovery}`), { cause: error });
+                    }
+                } finally {
+                    await fs.unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; });
+                }
                 console.log(`Updated front-matter for: ${path.basename(filePath)}`);
             }
             
@@ -117,6 +164,8 @@ export class FrontMatterProcessorV2 {
 
         try {
             // Parse existing front-matter
+            const header = content.replace(/^\uFEFF/, '').match(/^---([^\r\n]*)(?:\r?\n|$)/);
+            if (header && header[1].trim() !== '') throw new Error('Only YAML front matter is supported; executable engines are disabled');
             const parsed = matter(content);
             let frontMatter: FrontMatterData = { ...parsed.data };
             let modified = false;
@@ -220,7 +269,7 @@ export class FrontMatterProcessorV2 {
         }
 
         // Clean up and normalize data
-        const cleanupResult = this.cleanupFrontMatter(frontMatter);
+        const cleanupResult = options?.preserveExisting === false ? this.cleanupFrontMatter(frontMatter) : { frontMatter, modified: false, changes: [], warnings: [] };
         if (cleanupResult.modified) {
             frontMatter = cleanupResult.frontMatter;
             changes.push(...cleanupResult.changes);
@@ -359,7 +408,7 @@ export class FrontMatterProcessorV2 {
                         modified = true;
                     }
                 }
-            } catch (error) {
+            } catch {
                 warnings.push('Failed to parse date field');
             }
         }
@@ -463,10 +512,7 @@ export function createHexoFrontMatterProcessor(options?: ProcessingOptions): Fro
         autoGenerateTitle: true,
         autoGenerateSlug: false,
         requiredFields: ['title', 'date'],
-        defaultValues: {
-            draft: false,
-            author: 'Hexo Blog'
-        }
+        defaultValues: {}
     };
 
     return new FrontMatterProcessorV2({ ...hexoDefaults, ...options });

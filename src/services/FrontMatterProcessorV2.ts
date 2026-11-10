@@ -91,7 +91,37 @@ export class FrontMatterProcessorV2 {
                     if (current.ino !== stat.ino || current.mtimeMs !== stat.mtimeMs || !(await fs.readFile(filePath)).equals(bytes)) {
                         throw new Error('File changed while processing; refusing to overwrite newer content');
                     }
-                    await fs.rename(temporary, filePath);
+                    // Retain the actual inode moved out of the way, not an earlier snapshot.
+                    // An editor writing via an already-open descriptor will still write into
+                    // this recovery file. Never overwrite a competing new destination.
+                    const recoveryDir = await fs.mkdtemp(path.join(path.dirname(filePath), '.hexo-frontmatter-backup-'));
+                    const recovery = path.join(recoveryDir, path.basename(filePath) + '.bak');
+                    let moved = false;
+                    try {
+                        // Verify hard-link support before moving the user's original.
+                        const probe = path.join(recoveryDir, 'link-probe.tmp');
+                        await fs.link(temporary, probe);
+                        await fs.unlink(probe);
+                        await fs.rename(filePath, recovery);
+                        moved = true;
+                        const retained = await fs.lstat(recovery);
+                        if (!retained.isFile() || retained.ino !== stat.ino || !(await fs.readFile(recovery)).equals(bytes)) {
+                            throw new Error('Concurrent edit detected in retained original');
+                        }
+                        // link is atomic create-if-absent; unlike rename it cannot clobber
+                        // a file the editor recreates after we move the original.
+                        await fs.link(temporary, filePath);
+                        result.warnings.push(`Original retained for recovery: ${recovery}. Open editors may write later changes there; inspect before removing.`);
+                    } catch (error) {
+                        if (moved) {
+                            // Restore only an absent destination. A competing writer wins.
+                            await fs.link(recovery, filePath).catch(restoreError => {
+                                if (restoreError.code !== 'EEXIST') console.error(`Restore failed; recover from ${recovery}:`, restoreError);
+                            });
+                        }
+                        // Preserve recovery context on runtimes predating ErrorOptions.cause.
+                        throw Object.assign(new Error(`${error.message}; original recovery location: ${recovery}`), { cause: error });
+                    }
                 } finally {
                     await fs.unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; });
                 }

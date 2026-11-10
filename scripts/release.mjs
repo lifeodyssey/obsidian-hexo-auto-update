@@ -6,6 +6,21 @@ import { pathToFileURL } from 'node:url';
 const execute = (command, args) => execFileSync(command, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
+/** main is the trust root. This cannot prove human review or replace branch/tag protection. */
+export function verifyRequest(repository, tag, sha, trustedSha, run = execute) {
+    if (!versionPattern.test(tag) || !/^[0-9a-f]{40}$/.test(sha) || !/^[0-9a-f]{40}$/.test(trustedSha)) throw new Error('Invalid immutable release request');
+    run('git', ['merge-base', '--is-ancestor', sha, trustedSha]);
+    verifyTag(repository, tag, sha, run);
+}
+
+export function verifyAssets(release, assets) {
+    if (release.assets.length !== assets.length || new Set(release.assets.map(item => item.name)).size !== assets.length) throw new Error('Unexpected or duplicate release assets');
+    for (const asset of assets) {
+        const existing = release.assets.find(item => item.name === asset.name);
+        if (!existing || existing.size !== asset.size || existing.digest !== asset.digest) throw new Error(`Missing or changed release asset: ${asset.name}`);
+    }
+}
+
 /** Validate explicit version-tag intent and the committed compatibility/channel metadata. */
 export function releasePlan(pkg, manifest, config, versions, tag) {
     if (!versionPattern.test(pkg.version) || tag !== pkg.version) throw new Error('Release tag must equal the numeric x.y.z package version');
@@ -28,12 +43,10 @@ export function verifyTag(repository, version, sha, run = execute) {
 export function verifyRelease(release, repository, version, channel, sha, run = execute) {
     if (release.tag_name !== version) throw new Error('Release tag mismatch');
     if (release.prerelease !== (channel === 'prerelease')) throw new Error('Existing release has a different channel');
-    // GitHub target_commitish can be a mutable branch; resolve it rather than treating its name as a SHA.
+    // Reject mutable branches even when they currently resolve to the intended commit.
     // For published releases the immutable tag is authoritative; drafts must also match their proposed target.
     if (release.draft) {
-        if (!release.target_commitish) throw new Error('Draft target is missing');
-        const target = JSON.parse(run('gh', ['api', `repos/${repository}/commits/${encodeURIComponent(release.target_commitish)}`]));
-        if (target.sha !== sha) throw new Error('Draft target points to a different commit');
+        if (release.target_commitish !== sha) throw new Error('Draft target must equal the expected immutable commit SHA');
     }
     verifyTag(repository, version, sha, run);
 }
@@ -70,15 +83,25 @@ export function publish({ repository, version, channel, sha, assets, notes }, ru
         release = JSON.parse(run('gh', ['api', endpoint]));
         verifyRelease(release, repository, version, channel, sha, run);
         if (!release.draft) throw new Error('Draft was published concurrently; inspect assets before retry');
+        verifyAssets(release, assets);
         run('gh', ['release', 'edit', version, '--repo', repository, '--draft=false', `--prerelease=${channel === 'prerelease'}`, ...(channel === 'prerelease' ? ['--latest=false'] : [])]);
     }
+    // Detection only: the Releases API has no documented compare-and-swap publication.
+    const published = JSON.parse(run('gh', ['api', endpoint]));
+    verifyRelease(published, repository, version, channel, sha, run);
+    verifyAssets(published, assets);
+    if (published.draft) throw new Error('Release remains a draft');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    if (process.argv[2] === 'request') {
+        verifyRequest(process.env.GITHUB_REPOSITORY, process.env.RELEASE_TAG, process.env.RELEASE_SHA, process.env.TRUSTED_SHA);
+        process.exit(0);
+    }
     const readJson = file => JSON.parse(readFileSync(file, 'utf8'));
     const pkg = readJson('package.json');
     const config = readJson('release-config.json');
-    const plan = releasePlan(pkg, readJson('manifest.json'), config, readJson('versions.json'), process.env.GITHUB_REF_NAME);
+    const plan = releasePlan(pkg, readJson('manifest.json'), config, readJson('versions.json'), process.env.RELEASE_TAG);
     const notes = readFileSync(config.notes, 'utf8');
     if (!notes.startsWith(`<!-- release:${plan.version} channel:${plan.channel} -->`)) throw new Error('Release notes channel/version mismatch');
     if (process.argv[2] === 'plan') {

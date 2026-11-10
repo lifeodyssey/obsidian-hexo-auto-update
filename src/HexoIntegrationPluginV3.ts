@@ -283,6 +283,11 @@ export default class HexoIntegrationPluginV3 extends Plugin {
             for (const file of files) await assertManagedPath(posts, file);
             const results = await this.frontMatterProcessor.processFiles(files);
             const summary = this.frontMatterProcessor.getSummary(results);
+            const recoveryWarnings = results.flatMap(result => result.warnings).filter(warning => warning.startsWith('Original retained'));
+            if (recoveryWarnings.length) {
+                console.warn('Front-matter recovery locations:', recoveryWarnings);
+                new Notice(`${recoveryWarnings.length} original post(s) retained in adjacent .hexo-frontmatter-backup-* folders. Check these for late editor changes before deleting backups.`, 12000);
+            }
             
             this.stats.filesProcessed += summary.successful;
             this.stats.errors += summary.errors;

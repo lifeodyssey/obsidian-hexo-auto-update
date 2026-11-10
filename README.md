@@ -23,7 +23,8 @@ For manual installation, download `main.js`, `manifest.json`, and `styles.css` f
 - Changes and deletions under `_posts` can be committed. Unrelated README/config edits are not included. If any user changes are already staged or conflicted, automatic commits stop so partial staging is not consumed.
 - Auto-push is off by default. A failed push is reported; a later sync retries when Git reports local commits ahead of the upstream. There is no background exponential-backoff retry service.
 - Before writing, the original file is moved into an adjacent hidden `.hexo-frontmatter-backup-*` folder and retained there. The replacement is created only if its destination is still absent; a competing editor-created file is never overwritten. If an editor writes through an old open descriptor, its changes remain in the retained backup, not necessarily the visible post. Check these recovery folders and the console notices before deleting them. Backups are excluded from automatic scanning/commits. This is a recoverability safeguard, NOT cross-process locking or a power-failure guarantee; a brief absent-file interval can be visible to editors. Filesystems without hard-link support fail closed and may require manual restoration from the reported backup.
-- Existing real files/directories or conflicting links at the vault's blog-link location are **not deleted or replaced**. Resolve conflicts manually after backing up. A permission-related symlink fallback is not a live copy of all blog content.
+- New vault references are ordinary directories containing instructions and configuration, **not symlinks and not copies of your posts**. This prevents this plugin from introducing an external repository tree for Obsidian itself to index/watch. Synchronization still accesses the configured `_posts` directly. You can edit those posts in an external editor; the reference does not provide in-vault editing of them.
+- Existing real files/directories and old external links are **not deleted or replaced**. Old links remain a host indexing risk until you migrate them; plugin watcher settings cannot control Obsidian's own indexer. Back up first, close Obsidian, verify that the old `Mac Blog` / `Win Blog` / `Hexo Blog` entry really is a link, and manually move that link out of the vault without moving or deleting its target. Reopen Obsidian and run Create Safe Blog Reference. Never apply these link-only instructions to a real directory containing notes. If permission errors remain, keep the plugin disabled while investigating the remaining host links/permissions.
 - Plugin operations are serialized. External Git commands and other programs are not controlled by this queue.
 
 Defaults enable auto-sync and auto-commit, but not auto-push. For the first trial, disable auto-commit and use a disposable repository.
@@ -40,7 +41,7 @@ If the operation restored a missing post using a hard link, that post and its ba
 - Toggle Auto-Sync
 - Process All Posts Front-Matter
 - Show Plugin Statistics
-- Recreate Blog Link
+- Create Safe Blog Reference
 
 Statistics are session counters, not a complete audit log. Sync errors appear as notices and in the developer console.
 

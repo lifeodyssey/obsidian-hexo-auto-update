@@ -2,11 +2,12 @@ import eslint from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import globals from 'globals';
 
-// Exclude files explicitly since ignores array doesn't seem to fully work in ESLint 9
+// Global ignores keep generated artifacts and legacy configs outside lint scope.
 const excludedFiles = [
-  'node_modules/**', 
-  'dist/**', 
-  'build/**', 
+  'node_modules/**',
+  'dist/**',
+  'main.js',
+  'build/**',
   'coverage/**',
   '.eslintrc.js',
   '.eslintrc',
@@ -18,6 +19,7 @@ const excludedFiles = [
 ];
 
 export default tseslint.config(
+  { ignores: excludedFiles },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
@@ -54,4 +56,4 @@ export default tseslint.config(
       '@typescript-eslint/no-explicit-any': 'off'
     }
   }
-); 
+);

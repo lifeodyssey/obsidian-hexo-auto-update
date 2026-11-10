@@ -46,3 +46,9 @@ test('unindexed vault post fails without filesystem fallback',async()=>{
     await expect(fixture.state.processVaultFiles([fixture.absolute])).rejects.toThrow('not indexed');
     expect(fixture.process).not.toHaveBeenCalled();
 });
+
+test('vault mode refuses undecodable Markdown without coordinated write', async()=>{
+    const fixture=setup('bad \uFFFD text');
+    await expect(fixture.state.processVaultFiles([fixture.absolute])).rejects.toThrow('undecodable');
+    expect(fixture.process).not.toHaveBeenCalled();
+});

@@ -69,7 +69,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
             this.isInitialized = true;
             // Step 4: Initialize blog integration if configured
             if (this.isConfigured(this.settings)) {
-                await this.enqueue(() => this.initializeBlogIntegration());
+                await this.enqueue(() => this.initializeBlogIntegration(this.settings.contentMode !== 'vault' || this.settings.autoSync));
             } else {
                 this.showConfigurationNotice();
             }
@@ -180,7 +180,7 @@ export default class HexoIntegrationPluginV3 extends Plugin {
             const file = this.app.vault.getAbstractFileByPath(relative);
             if (!(file instanceof TFile)) throw new Error(`Post not indexed by Obsidian yet: ${relative}. Retry Sync Now.`);
             const original = await this.app.vault.read(file);
-            if (original.includes('\0')) throw new Error('Refusing binary Markdown');
+            if (original.includes('\0') || original.includes('\uFFFD')) throw new Error('Refusing binary or undecodable Markdown');
             const result = await this.frontMatterProcessor.processContent(original, absolute);
             if (!result.success) throw new Error(result.errors.join('; '));
             if (result.modified) await this.app.vault.process(file, current => {

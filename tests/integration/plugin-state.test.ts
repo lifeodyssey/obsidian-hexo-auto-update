@@ -80,3 +80,14 @@ test('changing content mode drains prior work, invalidates old settings and disa
     expect(plugin.settings).toMatchObject({contentMode:'vault',autoSync:false,autoCommit:false,autoPush:false});
     expect(state.git).toBeUndefined();expect(state.fileScanner).toBeUndefined();
 });
+
+test('vault mode with automatic sync off loads without initial content edits', async()=>{
+    const {plugin,state}=fixture();
+    jest.spyOn(plugin,'loadSettings').mockImplementation(async()=>{plugin.settings={...DEFAULT_SETTINGS,contentMode:'vault',vaultContentPath:'/public',autoSync:false,autoCommit:false,autoPush:false};});
+    const host=state as unknown as { initializeCoreServices():Promise<void>; setupUI():void };
+    jest.spyOn(host,'initializeCoreServices').mockResolvedValue(undefined);
+    jest.spyOn(host,'setupUI').mockImplementation(()=>undefined);
+    const initialize=jest.spyOn(state,'initializeBlogIntegration').mockResolvedValue(undefined);
+    await plugin.onload();
+    expect(initialize).toHaveBeenCalledWith(false);
+});

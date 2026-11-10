@@ -2,7 +2,7 @@
 
 **🚀 Next-generation event-driven plugin for seamlessly syncing Obsidian notes to Hexo blogs**
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/your-repo/releases)
+[![Version](https://img.shields.io/badge/version-2.0.1%20preview-blue.svg)](https://github.com/your-repo/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)](#testing)
 [![Coverage](https://img.shields.io/badge/coverage-85%25-brightgreen.svg)](#testing)

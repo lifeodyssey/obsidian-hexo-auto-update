@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -15,39 +19,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '24.x'
           cache: npm
       - name: Detect version change
         id: version
-        shell: bash
-        run: |
-          set -euo pipefail
-          version=$(node -p "require('./package.json').version")
-          manifest=$(node -p "require('./manifest.json').version")
-          test "$version" = "$manifest"
-          previous=$(git show HEAD^:package.json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).version))")
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          if [ "$version" != "$previous" ]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          fi
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: node scripts/release.mjs plan
       - name: Install locked dependencies
         if: steps.version.outputs.changed == 'true'
         run: npm ci --ignore-scripts
       - name: Validate
         if: steps.version.outputs.changed == 'true'
         run: npm run check && npm run build
-      - name: Publish security preview
+      - name: Publish configured release
         if: steps.version.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          gh release create "$VERSION" \
-            --target "$GITHUB_SHA" \
-            --title "v$VERSION security preview" \
-            --notes-file SECURITY_DEPENDENCIES.md \
-            --prerelease \
-            dist/main.js manifest.json styles.css
+        run: node scripts/release.mjs publish

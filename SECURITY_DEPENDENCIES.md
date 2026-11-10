@@ -40,3 +40,17 @@ for the entire dependency tree.
 
 No Obsidian desktop UI/real-vault smoke test has been performed. The release
 is deliberately a prerelease, not a claim of stable end-user acceptance.
+
+## Release maintenance
+
+Every new version must also update `release-config.json` with the same version
+and an explicit `prerelease` or `stable` channel. The current 2.0.1 remains a
+prerelease. A non-version-changing push does not republish it. Detection uses
+the complete push base (`github.event.before`), including batched commits.
+
+Publication stages assets in a draft first. Retries reuse existing releases;
+published matching assets are left untouched, missing assets can be added,
+and tag/asset/channel conflicts fail closed. Network/authentication failures
+are not treated as a missing release. Tests simulate these cases without
+creating GitHub releases. Before promoting a future stable version, run a
+real Obsidian/real-vault smoke test; these tests do not replace that check.

@@ -1,8 +1,8 @@
 import { readFileSync } from 'fs';
-import * as path from 'path';
+import { resolve, join } from 'path';
 
-const root = path.resolve(__dirname, '../..');
-const readJson = (file: string) => JSON.parse(readFileSync(path.join(root, file), 'utf8'));
+const root = resolve(__dirname, '../..');
+const readJson = (file: string) => JSON.parse(readFileSync(join(root, file), 'utf8'));
 const atLeast = (version: string, minimum: number[]) => {
     const parts = version.split('.').map(Number);
     return parts.every(Number.isInteger) && parts.length === 3 &&

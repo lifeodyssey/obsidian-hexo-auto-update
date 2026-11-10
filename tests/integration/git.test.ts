@@ -25,6 +25,7 @@ describe('patched simple-git compatibility', () => {
             await git.addRemote('origin', remote);
             await git.push('origin', 'HEAD:main');
             expect((await git.status()).isClean()).toBe(true);
+            expect(await simpleGit(remote).revparse(['refs/heads/main'])).toBe(await git.revparse(['HEAD']));
         } finally {
             rmSync(root, { recursive: true, force: true });
         }

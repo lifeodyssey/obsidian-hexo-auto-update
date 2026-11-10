@@ -28,6 +28,12 @@ For manual installation, download `main.js`, `manifest.json`, and `styles.css` f
 
 Defaults enable auto-sync and auto-commit, but not auto-push. For the first trial, disable auto-commit and use a disposable repository.
 
+### Recovery after a concurrent edit
+
+Stop auto-sync and close external editors first. The notice identifies the retained original; additional paths are in the developer console. Compare both the current post and its `.bak` file, which may contain later edits, and keep copies of both until reconciled. Reopen the editor after reconciliation so it no longer writes through an old descriptor.
+
+If the operation restored a missing post using a hard link, that post and its backup intentionally share one inode. Later processing refuses `nlink > 1`. After reviewing both versions, save the chosen content as a **new independent regular file** (not a hard link) and replace the post only with all editors closed. Do not remove recovery folders blindly. There is no automatic backup cleanup or merge.
+
 ## Commands
 
 - Sync Now

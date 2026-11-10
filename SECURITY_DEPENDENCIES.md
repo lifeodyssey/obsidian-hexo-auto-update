@@ -45,8 +45,10 @@ is deliberately a prerelease, not a claim of stable end-user acceptance.
 
 Every new version must also update `release-config.json` with the same version
 and an explicit `prerelease` or `stable` channel. The current 2.0.1 remains a
-prerelease. A non-version-changing push does not republish it. Detection uses
-the complete push base (`github.event.before`), including batched commits.
+prerelease. Neither a branch nor tag push publishes. Maintainers explicitly dispatch the
+release workflow from main with an immutable numeric version tag and its full
+commit SHA. See RELEASE_PROCESS.md for the trust boundary and remaining
+GitHub API concurrency limitations.
 
 Publication stages assets in a draft first. Retries reuse existing releases;
 published matching assets are left untouched, missing assets can be added,

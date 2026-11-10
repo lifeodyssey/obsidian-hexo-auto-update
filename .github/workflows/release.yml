@@ -1,38 +1,103 @@
-name: Release explicitly tagged Obsidian plugin
+name: Release reviewed Obsidian plugin
 
+# Deliberate dispatch from main, not executable workflow code selected by a tag push.
 on:
-  push:
-    tags: ['[0-9]*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing immutable x.y.z version tag on main history'
+        required: true
+        type: string
+      commit:
+        description: 'Expected full 40-character commit SHA (never a branch)'
+        required: true
+        type: string
 
 permissions:
   contents: read
 
-# Different versions cannot displace each other's pending publication.
-# Ordinary main-branch pushes never enter this workflow.
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
-  release:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: trusted
+      - name: Validate immutable release request against trusted main
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_SHA: ${{ inputs.commit }}
+          TRUSTED_SHA: ${{ github.sha }}
+        working-directory: trusted
+        run: node scripts/release.mjs request
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+          path: release
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: npm
+          cache-dependency-path: release/package-lock.json
+      - name: Validate release metadata with trusted helper
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        working-directory: release
+        run: node ../trusted/scripts/release.mjs plan
+      - name: Build without a write token
+        working-directory: release
+        run: npm ci --ignore-scripts && npm run check && npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-build
+          path: release/dist/main.js
+          if-no-files-found: error
+          retention-days: 1
+  publish:
+    needs: build
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
+          persist-credentials: false
+          path: trusted
       - uses: actions/setup-node@v4
         with:
           node-version: '24.x'
-          cache: npm
-      - name: Validate explicit tag and metadata
-        run: node scripts/release.mjs plan
-      - name: Install locked dependencies
-        run: npm ci --ignore-scripts
-      - name: Validate
-        run: npm run check && npm run build
-      - name: Publish configured release
+      - name: Revalidate request without executing tag code
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_SHA: ${{ inputs.commit }}
+          TRUSTED_SHA: ${{ github.sha }}
+        working-directory: trusted
+        run: node scripts/release.mjs request
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: plugin-build
+          path: release/dist
+      # No dependency installation, hooks or tag-provided executable scripts in this job.
+      - name: Publish using trusted main helper only
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/release.mjs publish
+          RELEASE_TAG: ${{ inputs.tag }}
+        working-directory: release
+        run: node ../trusted/scripts/release.mjs publish

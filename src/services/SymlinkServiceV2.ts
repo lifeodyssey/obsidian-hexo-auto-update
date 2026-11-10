@@ -1,15 +1,16 @@
 import { App, FileSystemAdapter, Notice } from 'obsidian';
 import { constants, promises as fs } from 'fs';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
+import { dirname, isAbsolute, join, relative, sep } from 'path';
 import { platform } from 'os';
 
 interface LinkResult {
     success: boolean;
     message: string;
     fallback?: boolean;
+    needsMigration?: boolean;
 }
 
-/** Blog links never replace, traverse for writing, or recursively delete existing paths. */
+/** Reference-only integration: never mount an external repository into the vault. */
 export class SymlinkServiceV2 {
     constructor(private app: App) {}
 
@@ -33,19 +34,11 @@ export class SymlinkServiceV2 {
         if (!source || !isAbsolute(source)) throw new Error('Configure an absolute Hexo blog directory');
         const canonical = await fs.realpath(source);
         if (!(await fs.stat(canonical)).isDirectory()) throw new Error('Hexo blog path is not a directory');
-        // A blog that contains the vault would make the new directory link recursive.
+        // Keep the configured repository distinct from the vault and its ancestors.
         const vaultRelative = relative(canonical, dirname(target));
         if (vaultRelative === '' || (!vaultRelative.startsWith(`..${sep}`) && vaultRelative !== '..' && !isAbsolute(vaultRelative))) {
             throw new Error('The blog directory must not be the vault or contain the vault');
         }
-        return canonical;
-    }
-
-    /** Resolve relative symlink targets against their containing directory, not process.cwd(). */
-    private async symlinkTarget(target: string): Promise<string> {
-        const destination = resolve(dirname(target), await fs.readlink(target));
-        const canonical = await fs.realpath(destination);
-        if (!(await fs.stat(canonical)).isDirectory()) throw new Error('Blog link is not a directory');
         return canonical;
     }
 
@@ -64,6 +57,7 @@ export class SymlinkServiceV2 {
         }
     }
 
+    // Kept for API compatibility: this method now creates references only.
     async createSafeSymlink(hexoSourcePath: string): Promise<LinkResult> {
         try {
             const target = await this.linkPath();
@@ -78,24 +72,14 @@ export class SymlinkServiceV2 {
             }
             if (existing) {
                 if (existing.isSymbolicLink()) {
-                    if (await this.symlinkTarget(target) === source) {
-                        return { success: true, message: 'Existing blog link is already correct' };
-                    }
+                    return { success: false, needsMigration: true, message: `Legacy blog symlink preserved: ${target}. Close Obsidian and move only this link outside the vault before retrying. Do not delete its target. Reference mode prevents Obsidian from scanning the external repository.` };
                 } else if (existing.isDirectory() && await this.referenceTarget(target) === source) {
                     return { success: true, fallback: true, message: 'Existing reference preserved; no files changed' };
                 }
-                return { success: false, message: `Existing path preserved: ${target}. Move or rename it yourself before creating a different link.` };
+                return { success: false, message: `Existing path preserved: ${target}. Move or rename it yourself before creating a different reference.` };
             }
             await fs.access(source, constants.R_OK);
-            try {
-                await fs.symlink(source, target, platform() === 'win32' ? 'junction' : 'dir');
-                new Notice(`Blog link created at ${this.getTargetFolderName()}`);
-                return { success: true, message: 'Symlink created successfully' };
-            } catch (error) {
-                // EEXIST can be a racing creator, not a reason to write through its path.
-                if (!['EPERM', 'EACCES', 'ENOSYS', 'ENOTSUP'].includes(error.code)) throw error;
-                return await this.createFallbackReference(source, target);
-            }
+            return await this.createFallbackReference(source, target);
         } catch (error) {
             return { success: false, message: `Blog link was not changed: ${error.message}` };
         }
@@ -120,11 +104,12 @@ export class SymlinkServiceV2 {
                 '# Blog Reference', '',
                 'This is a reference folder, not a synced copy or a symlink.', '',
                 `Blog path: ${source}`, '',
-                'Symlink creation was unavailable. No existing file was replaced.',
-                'To replace this reference with a link, first move this folder somewhere safe yourself.'
+                'The external repository is deliberately not mounted inside this vault.',
+                'Edit posts in an external editor. The plugin watches source/_posts directly.',
+                'Do not replace this reference with a symlink: Obsidian may scan the whole repository.'
             ].join('\n'), { flag: 'wx' });
-            new Notice('Created a blog reference instead of a symlink. Existing files were not replaced.');
-            return { success: true, fallback: true, message: 'Fallback reference created' };
+            new Notice('Created a safe blog reference. The external repository is not mounted in this vault.');
+            return { success: true, fallback: true, message: 'Safe reference created; external repository is not mounted in the vault' };
         } catch (error) {
             // A partial reference may contain files or concurrent user edits. Never recursively clean it up.
             return { success: false, fallback: true, message: `Reference not completed; existing files preserved: ${error.message}` };
@@ -135,6 +120,8 @@ export class SymlinkServiceV2 {
         isValid: boolean;
         type: 'symlink' | 'reference' | 'missing';
         needsRecreation: boolean;
+        needsMigration?: boolean;
+        message?: string;
     }> {
         let type: 'symlink' | 'reference' | 'missing' = 'missing';
         try {
@@ -144,7 +131,7 @@ export class SymlinkServiceV2 {
             let destination: string | null = null;
             if (stats.isSymbolicLink()) {
                 type = 'symlink';
-                destination = await this.symlinkTarget(target);
+                return { isValid: false, type, needsRecreation: true, needsMigration: true, message: 'Legacy external symlink requires manual migration; it has not been removed or changed.' };
             } else if (stats.isDirectory()) {
                 type = 'reference';
                 destination = await this.referenceTarget(target);
@@ -160,8 +147,7 @@ export class SymlinkServiceV2 {
         try {
             const target = await this.linkPath();
             const stats = await fs.lstat(target);
-            const source = stats.isSymbolicLink() ? await this.symlinkTarget(target)
-                : stats.isDirectory() ? await this.referenceTarget(target) : null;
+            const source = !stats.isSymbolicLink() && stats.isDirectory() ? await this.referenceTarget(target) : null;
             return source ? await this.sourcePath(source, target) : null;
         } catch {
             return null;

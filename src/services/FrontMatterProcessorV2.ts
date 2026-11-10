@@ -1,6 +1,8 @@
 import matter from 'gray-matter';
 import { promises as fs } from 'fs';
 import path from 'path';
+import { randomBytes } from 'crypto';
+import { isMarkdown } from './ManagedPaths';
 
 /**
  * Robust front-matter processor using gray-matter
@@ -50,9 +52,7 @@ export class FrontMatterProcessorV2 {
         autoGenerateSlug: false,
         requiredFields: ['title', 'date'],
         preserveExisting: true,
-        defaultValues: {
-            draft: false
-        }
+        defaultValues: {}
     };
 
     constructor(private options: ProcessingOptions = {}) {
@@ -70,14 +70,31 @@ export class FrontMatterProcessorV2 {
         
         try {
             // Read file content
-            const originalContent = await fs.readFile(filePath, 'utf8');
+            if (!isMarkdown(filePath)) throw new Error('Front-matter processing is restricted to Markdown files');
+            const stat = await fs.lstat(filePath);
+            if (!stat.isFile() || stat.nlink > 1) throw new Error('Refusing non-regular or hard-linked file');
+            const bytes = await fs.readFile(filePath);
+            const originalContent = bytes.toString('utf8');
+            if (bytes.includes(0) || !Buffer.from(originalContent, 'utf8').equals(bytes)) {
+                throw new Error('Refusing non-UTF-8 or binary content');
+            }
             
             // Process content
             const result = await this.processContent(originalContent, filePath, effectiveOptions);
             
             // Write back if modified
             if (result.modified && result.success) {
-                await fs.writeFile(filePath, result.processedContent, 'utf8');
+                const temporary = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${randomBytes(8).toString('hex')}.tmp`);
+                try {
+                    await fs.writeFile(temporary, result.processedContent, { encoding: 'utf8', flag: 'wx', mode: stat.mode });
+                    const current = await fs.lstat(filePath);
+                    if (current.ino !== stat.ino || current.mtimeMs !== stat.mtimeMs || !(await fs.readFile(filePath)).equals(bytes)) {
+                        throw new Error('File changed while processing; refusing to overwrite newer content');
+                    }
+                    await fs.rename(temporary, filePath);
+                } finally {
+                    await fs.unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; });
+                }
                 console.log(`Updated front-matter for: ${path.basename(filePath)}`);
             }
             
@@ -117,6 +134,8 @@ export class FrontMatterProcessorV2 {
 
         try {
             // Parse existing front-matter
+            const header = content.replace(/^\uFEFF/, '').match(/^---([^\r\n]*)(?:\r?\n|$)/);
+            if (header && header[1].trim() !== '') throw new Error('Only YAML front matter is supported; executable engines are disabled');
             const parsed = matter(content);
             let frontMatter: FrontMatterData = { ...parsed.data };
             let modified = false;
@@ -220,7 +239,7 @@ export class FrontMatterProcessorV2 {
         }
 
         // Clean up and normalize data
-        const cleanupResult = this.cleanupFrontMatter(frontMatter);
+        const cleanupResult = options?.preserveExisting === false ? this.cleanupFrontMatter(frontMatter) : { frontMatter, modified: false, changes: [], warnings: [] };
         if (cleanupResult.modified) {
             frontMatter = cleanupResult.frontMatter;
             changes.push(...cleanupResult.changes);
@@ -359,7 +378,7 @@ export class FrontMatterProcessorV2 {
                         modified = true;
                     }
                 }
-            } catch (error) {
+            } catch {
                 warnings.push('Failed to parse date field');
             }
         }
@@ -463,10 +482,7 @@ export function createHexoFrontMatterProcessor(options?: ProcessingOptions): Fro
         autoGenerateTitle: true,
         autoGenerateSlug: false,
         requiredFields: ['title', 'date'],
-        defaultValues: {
-            draft: false,
-            author: 'Hexo Blog'
-        }
+        defaultValues: {}
     };
 
     return new FrontMatterProcessorV2({ ...hexoDefaults, ...options });

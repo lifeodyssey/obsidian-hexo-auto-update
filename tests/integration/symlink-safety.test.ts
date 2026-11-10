@@ -26,21 +26,22 @@ describe('non-destructive blog links (real temporary filesystem)', () => {
         await fs.rm(root, { recursive: true, force: true });
     });
 
-    it('creates a fresh link then recreates it idempotently without writing into the blog', async () => {
+    it('creates a plain reference then recreates it idempotently without writing into the blog', async () => {
         await fs.writeFile(join(blog, 'README.md'), 'my blog readme');
         expect((await service.createSafeSymlink(blog)).success).toBe(true);
         expect((await service.createSafeSymlink(blog)).success).toBe(true);
         expect(await fs.readFile(join(blog, 'README.md'), 'utf8')).toBe('my blog readme');
         await expect(fs.lstat(join(blog, '.hexo-config.json'))).rejects.toMatchObject({ code: 'ENOENT' });
         expect(await service.getBlogPath()).toBe(await fs.realpath(blog));
+        expect((await fs.lstat(link)).isSymbolicLink()).toBe(false);
     });
 
-    it('accepts an equivalent relative symlink and resolves its path from the vault', async () => {
+    it('rejects even a correct relative legacy symlink for manual migration', async () => {
         await fs.symlink(relative(vault, blog), link, 'dir');
-        expect(await service.validateSymlink(blog)).toEqual({ isValid: true, type: 'symlink', needsRecreation: false });
-        expect((await service.createSafeSymlink(blog)).success).toBe(true);
+        expect(await service.validateSymlink(blog)).toMatchObject({ isValid: false, type: 'symlink', needsRecreation: true, needsMigration: true });
+        expect(await service.createSafeSymlink(blog)).toMatchObject({ success: false, needsMigration: true });
         expect(await fs.readlink(link)).toBe(relative(vault, blog));
-        expect(await service.getBlogPath()).toBe(await fs.realpath(blog));
+        expect(await service.getBlogPath()).toBeNull();
     });
 
     it('preserves a real directory and its README instead of turning it into a fallback', async () => {
@@ -101,16 +102,17 @@ describe('non-destructive blog links (real temporary filesystem)', () => {
         expect(await fs.readdir(vault)).toEqual([]);
     });
 
-    it('creates an exclusive fallback only after a symlink permission failure', async () => {
-        jest.spyOn(fs, 'symlink').mockRejectedValueOnce(Object.assign(new Error('not permitted'), { code: 'EPERM' }));
+    it('never attempts symlink creation even when it would succeed', async () => {
+        const symlink = jest.spyOn(fs, 'symlink');
         expect(await service.createSafeSymlink(blog)).toMatchObject({ success: true, fallback: true });
         expect((await fs.lstat(link)).isDirectory()).toBe(true);
         expect(await service.getBlogPath()).toBe(await fs.realpath(blog));
         expect(await fs.readdir(blog)).toEqual([]);
+        expect(symlink).not.toHaveBeenCalled();
     });
 
     it('does not fall back after a concurrent creator wins the path', async () => {
-        jest.spyOn(fs, 'symlink').mockImplementationOnce(async () => {
+        jest.spyOn(fs, 'mkdir').mockImplementationOnce(async () => {
             await fs.symlink(blog, link, 'dir');
             throw Object.assign(new Error('exists'), { code: 'EEXIST' });
         });
@@ -120,7 +122,7 @@ describe('non-destructive blog links (real temporary filesystem)', () => {
     });
 
     it('preserves a concurrently created fallback path after permission failure', async () => {
-        jest.spyOn(fs, 'symlink').mockImplementationOnce(async () => {
+        jest.spyOn(fs, 'mkdir').mockImplementationOnce(async () => {
             await fs.mkdir(link);
             await fs.writeFile(join(link, 'README.md'), 'concurrent note');
             throw Object.assign(new Error('not permitted'), { code: 'EPERM' });
@@ -153,7 +155,6 @@ describe('non-destructive blog links (real temporary filesystem)', () => {
     });
 
     it('refuses fallback writes if the newly created directory is replaced by a symlink', async () => {
-        jest.spyOn(fs, 'symlink').mockRejectedValueOnce(Object.assign(new Error('not permitted'), { code: 'EPERM' }));
         const originalLstat = fs.lstat.bind(fs);
         let seenCreatedDirectory = false;
         jest.spyOn(fs, 'lstat').mockImplementation(async (file: string) => {
@@ -171,6 +172,24 @@ describe('non-destructive blog links (real temporary filesystem)', () => {
         });
         expect(await service.createSafeSymlink(blog)).toMatchObject({ success: false, fallback: true });
         expect(await fs.readdir(blog)).toEqual([]);
+    });
+
+    it('reports denied reference creation without changing source or pretending success', async () => {
+        jest.spyOn(fs, 'mkdir').mockRejectedValueOnce(Object.assign(new Error('permission denied'), { code: 'EACCES' }));
+        expect(await service.createSafeSymlink(blog)).toMatchObject({ success: false });
+        expect(await fs.readdir(blog)).toEqual([]);
+        expect(await fs.readdir(vault)).toEqual([]);
+    });
+
+    it('reopens a reference after service restart without exposing repository children', async () => {
+        await fs.mkdir(join(blog, 'node_modules'));
+        await fs.writeFile(join(blog, 'node_modules', 'private.md'), 'not indexed through vault');
+        await service.createSafeSymlink(blog);
+        const restarted = new SymlinkServiceV2({ vault: { adapter: { getBasePath: () => vault } } } as unknown as App);
+        expect(await restarted.validateSymlink(blog)).toEqual({ isValid: true, type: 'reference', needsRecreation: false });
+        expect((await restarted.createSafeSymlink(blog)).success).toBe(true);
+        expect((await fs.readdir(link)).sort()).toEqual(['.hexo-config.json', 'README.md']);
+        await expect(fs.lstat(join(link, 'node_modules'))).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
 });

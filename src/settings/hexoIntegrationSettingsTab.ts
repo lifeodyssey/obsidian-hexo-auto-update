@@ -27,7 +27,7 @@ export default class HexoIntegrationSettingsTab extends PluginSettingTab {
 
         const hexoFolderSetting = new Setting(containerEl)
             .setName("Hexo Source Path")
-            .setDesc("Specify the path to the Hexo source folder")
+            .setDesc("Absolute Hexo Git repository root. Sync uses source/_posts directly; the vault gets an inert reference, not an external directory link.")
             .addButton(button => {
                 button.setButtonText("Select Folder")
                     .onClick(async () => {
@@ -64,7 +64,7 @@ export default class HexoIntegrationSettingsTab extends PluginSettingTab {
             })
         const addButton = hexoFolderSetting.addButton((button) =>
             button
-                .setButtonText("Add")
+                .setButtonText("Create Safe Reference")
                 .onClick(async () => {
                     if (this.plugin.settings.hexoSourcePath) {
                         addButton.setDisabled(true);
@@ -72,7 +72,7 @@ export default class HexoIntegrationSettingsTab extends PluginSettingTab {
                         const addingNotice = new Notice("Adding...");
 
                         try {
-                            // Use the symlink service through the plugin
+                            // Create an inert reference; do not mount an external tree into the vault
                             const status = await this.plugin.createSymlink(this.plugin.settings.hexoSourcePath);
 
                             addingNotice.hide();

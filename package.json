@@ -1,6 +1,6 @@
 {
   "name": "hexo-auto-updater",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Event-driven Obsidian-Hexo integration plugin with reactive file watching, batch processing, and robust error handling.",
   "main": "main.js",
   "type": "module",
@@ -44,7 +44,7 @@
     "globals": "^16.0.0",
     "jest": "^30.0.4",
     "mock-fs": "^5.5.0",
-    "obsidian": "latest",
+    "obsidian": "1.14.4",
     "prettier": "^3.2.5",
     "ts-jest": "^29.4.0",
     "ts-node": "^10.9.2",
@@ -58,7 +58,7 @@
     "gray-matter": "^4.0.3",
     "isomorphic-git": "^1.32.1",
     "rxjs": "^7.8.2",
-    "simple-git": "^3.28.0",
+    "simple-git": "4.0.2",
     "symlink-dir": "^6.0.5"
   }
 }

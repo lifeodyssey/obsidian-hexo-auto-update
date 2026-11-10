@@ -1,69 +1,53 @@
 name: Release Obsidian plugin if version changes
 
 on:
-    push:
-        branches:
-            - main
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
-    release:
-        runs-on: ubuntu-latest
-        steps:
-            - name: Check out repository
-              uses: actions/checkout@v3
-              with:
-                  fetch-depth: 2 # Fetches the commit history to compare changes
-
-            - name: Use Node.js
-              uses: actions/setup-node@v3
-              with:
-                  node-version: '18.x'
-
-            - name: Detect version change
-              id: version_check
-              run: |
-                  git fetch --depth=1 origin +refs/tags/*:refs/tags/*
-                  VERSION_MANIFEST=$(jq -r '.version' manifest.json)
-                  VERSION_PACKAGE=$(jq -r '.version' package.json)
-                  TAG_EXISTS=$(git tag -l "$VERSION_PACKAGE")
-                  
-                  # Check if the tag already exists
-                  if [[ -n "$TAG_EXISTS" ]]; then
-                    echo "Version tag $VERSION_PACKAGE already exists."
-                    echo "No new release needed."
-                    echo "release_needed=false" >> $GITHUB_ENV
-                    exit 0
-                  fi
-                  
-                  # Check versions match between files
-                  if [[ "$VERSION_MANIFEST" != "$VERSION_PACKAGE" ]]; then
-                    echo "Error: Versions in manifest.json and package.json do not match."
-                    exit 1
-                  fi
-                  
-                  PREVIOUS_VERSION_MANIFEST=$(git diff HEAD^ HEAD -- manifest.json | grep '"version":' | head -n 1 | awk '{print $2}' | tr -d '",')
-                  PREVIOUS_VERSION_PACKAGE=$(git diff HEAD^ HEAD -- package.json | grep '"version":' | head -n 1 | awk '{print $2}' | tr -d '",')
-                  
-                  # Check if the version has changed
-                  if [[ "$VERSION_MANIFEST" != "$PREVIOUS_VERSION_MANIFEST" || "$VERSION_PACKAGE" != "$PREVIOUS_VERSION_PACKAGE" ]]; then
-                    echo "Version has changed to $VERSION_PACKAGE."
-                    echo "release_needed=true" >> $GITHUB_ENV
-                    echo "new_version=$VERSION_PACKAGE" >> $GITHUB_ENV
-                  else
-                    echo "No version change detected."
-                    echo "release_needed=false" >> $GITHUB_ENV
-                  fi
-
-            - name: Create draft release
-              if: env.release_needed == 'true'
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              run: |
-                  npm install
-                  npm run build
-                  VERSION=$new_version
-                  gh release create $VERSION \
-                    --title "Draft Release v$VERSION" \
-                    --notes "Placeholder for release notes" \
-                    --draft \
-                    main.js manifest.json styles.css
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: npm
+      - name: Detect version change
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          manifest=$(node -p "require('./manifest.json').version")
+          test "$version" = "$manifest"
+          previous=$(git show HEAD^:package.json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).version))")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$version" != "$previous" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install locked dependencies
+        if: steps.version.outputs.changed == 'true'
+        run: npm ci --ignore-scripts
+      - name: Validate
+        if: steps.version.outputs.changed == 'true'
+        run: npm run check && npm run build
+      - name: Publish security preview
+        if: steps.version.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "$VERSION" \
+            --target "$GITHUB_SHA" \
+            --title "v$VERSION security preview" \
+            --notes-file SECURITY_DEPENDENCIES.md \
+            --prerelease \
+            dist/main.js manifest.json styles.css

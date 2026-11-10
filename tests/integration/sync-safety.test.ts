@@ -126,3 +126,43 @@ test('failed commit restores plugin staging without deleting working files', asy
     await expect(service.commit([file], 'fail', false)).rejects.toThrow('simulated commit failure');
     expect((await git.status()).staged).toEqual([]); expect(await fs.readFile(file, 'utf8')).toBe('# keep');
 });
+
+test('edit exactly between comparison and rename is retained and restored, not lost', async () => {
+    const file = join(posts, 'race.md'); await fs.writeFile(file, '# before');
+    const rename = fs.rename.bind(fs);
+    jest.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+        if (String(from) === file) await fs.writeFile(file, '# USER EDIT');
+        return rename(from, to);
+    });
+    const result = await new FrontMatterProcessorV2().processFile(file);
+    expect(result.success).toBe(false);
+    expect(await fs.readFile(file, 'utf8')).toBe('# USER EDIT');
+    const dir = (await fs.readdir(posts)).find(x => x.startsWith('.hexo-frontmatter-backup-'))!;
+    expect(await fs.readFile(join(posts, dir, 'race.md.bak'), 'utf8')).toBe('# USER EDIT');
+});
+
+test('competing recreation at destination wins and original remains recoverable', async () => {
+    const file = join(posts, 'race.md'); await fs.writeFile(file, '# before');
+    const link = fs.link.bind(fs);
+    jest.spyOn(fs, 'link').mockImplementation(async (from, to) => {
+        if (String(from).endsWith('.tmp') && String(to) === file) await fs.writeFile(file, '# NEW EDIT');
+        return link(from, to);
+    });
+    expect((await new FrontMatterProcessorV2().processFile(file)).success).toBe(false);
+    expect(await fs.readFile(file, 'utf8')).toBe('# NEW EDIT');
+    const dir = (await fs.readdir(posts)).find(x => x.startsWith('.hexo-frontmatter-backup-'))!;
+    expect(await fs.readFile(join(posts, dir, 'race.md.bak'), 'utf8')).toBe('# before');
+});
+
+test('late writes through an open editor descriptor remain in the retained inode', async () => {
+    const file = join(posts, 'race.md'); await fs.writeFile(file, '# before');
+    const editor = await fs.open(file, 'r+');
+    try {
+        const result = await new FrontMatterProcessorV2().processFile(file);
+        expect(result.success).toBe(true);
+        await editor.truncate(0); await editor.write('# LATE EDIT', 0, 'utf8');
+        const dir = (await fs.readdir(posts)).find(x => x.startsWith('.hexo-frontmatter-backup-'))!;
+        expect(await fs.readFile(join(posts, dir, 'race.md.bak'), 'utf8')).toBe('# LATE EDIT');
+        expect(result.warnings.some(x => x.includes('recovery'))).toBe(true);
+    } finally { await editor.close(); }
+});

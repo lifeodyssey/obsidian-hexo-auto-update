@@ -1,7 +1,7 @@
 {
   "name": "hexo-auto-updater",
   "version": "2.0.1",
-  "description": "Event-driven Obsidian-Hexo integration plugin with reactive file watching, batch processing, and robust error handling.",
+  "description": "Desktop Obsidian plugin for safe, scoped synchronization with a local Hexo Git repository.",
   "main": "main.js",
   "type": "module",
   "scripts": {
@@ -9,56 +9,49 @@
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "version": "node version-bump.mjs && git add manifest.json versions.json",
     "test": "jest && node --test scripts/release.test.mjs",
-    "test:unit": "jest --testPathPattern=tests/unit",
-    "test:integration": "jest --testPathPattern=tests/integration",
-    "test:performance": "jest --testPathPattern=tests/performance",
+    "test:unit": "jest --testPathPatterns=tests/unit",
+    "test:integration": "jest --testPathPatterns=tests/integration",
     "test:coverage": "jest --coverage",
     "test:watch": "jest --watch",
-    "benchmark": "npm run test:performance -- --verbose",
     "typecheck": "tsc -noEmit -skipLibCheck",
-    "lint": "eslint . --ignore-pattern=dist/ --ignore-pattern=.eslintrc.js --ignore-pattern=jest.config.ts --ignore-pattern=version-bump.mjs",
-    "lint:fix": "eslint . --ignore-pattern=dist/ --ignore-pattern=.eslintrc.js --ignore-pattern=jest.config.ts --ignore-pattern=version-bump.mjs --fix",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "format": "prettier --write \"**/*.{ts,js,json,md}\"",
     "check": "npm run lint && npm run typecheck && npm run test",
-    "validate:migration": "node scripts/deploy-and-validate.js",
     "health:check": "npm run typecheck && npm run test:unit && npm run test:integration",
-    "deploy:validate": "node scripts/deploy-and-validate.js",
-    "docs:generate": "echo 'API documentation generation would go here'",
-    "security:audit": "npm audit && echo 'Additional security checks completed'"
+    "security:audit": "npm audit"
   },
   "keywords": [],
   "author": "Zhenjia Zhou",
   "license": "MIT",
   "devDependencies": {
-    "@eslint/eslintrc": "^3.3.1",
-    "@eslint/js": "^9.23.0",
+    "@eslint/js": "^10.0.1",
     "@types/electron": "^1.4.38",
     "@types/jest": "^30.0.0",
-    "@types/mock-fs": "^4.13.4",
     "@types/node": "^24.0.10",
     "builtin-modules": "^5.0.0",
-    "esbuild": "0.25.5",
-    "eslint": "^8.57.0",
-    "eslint-plugin-import": "^2.29.1",
-    "eslint-plugin-jest": "^27.9.0",
-    "globals": "^16.0.0",
+    "esbuild": "0.28.2",
+    "eslint": "^10.14.0",
+    "globals": "^17.14.0",
     "jest": "^30.0.4",
-    "mock-fs": "^5.5.0",
     "obsidian": "1.14.4",
     "prettier": "^3.2.5",
     "ts-jest": "^29.4.0",
     "ts-node": "^10.9.2",
     "tslib": "^2.8.1",
     "typescript": "^5.8.2",
-    "typescript-eslint": "^7.18.0"
+    "typescript-eslint": "^8.72.2",
+    "@types/picomatch": "^4.0.3"
   },
   "dependencies": {
     "chokidar": "^4.0.3",
     "fast-glob": "^3.3.3",
     "gray-matter": "^4.0.3",
-    "isomorphic-git": "^1.32.1",
-    "rxjs": "^7.8.2",
     "simple-git": "4.0.2",
-    "symlink-dir": "^6.0.5"
+    "picomatch": "^4.0.7"
+  },
+  "overrides": {
+    "glob@>=9": "^14.0.4",
+    "minimatch@>=7": "^11.0.5"
   }
 }

@@ -1,354 +1,170 @@
-import { App, FileSystemAdapter, Notice } from "obsidian";
-import { promises as fs } from "fs";
-import path from "path";
-import os from "os";
+import { App, FileSystemAdapter, Notice } from 'obsidian';
+import { constants, promises as fs } from 'fs';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
+import { platform } from 'os';
 
-/**
- * Modern, permission-safe symlink service
- * Addresses Issues #1 and #3 - Mac permission problems
- */
+interface LinkResult {
+    success: boolean;
+    message: string;
+    fallback?: boolean;
+}
+
+/** Blog links never replace, traverse for writing, or recursively delete existing paths. */
 export class SymlinkServiceV2 {
-    private app: App;
-    
-    constructor(app: App) {
-        this.app = app;
-    }
+    constructor(private app: App) {}
 
-    /**
-     * Create symlink with comprehensive permission handling
-     * @param hexoSourcePath Path to the Hexo blog source
-     * @returns Promise<{success: boolean, message: string, fallback?: boolean}>
-     */
-    async createSafeSymlink(hexoSourcePath: string): Promise<{
-        success: boolean;
-        message: string;
-        fallback?: boolean;
-    }> {
-        try {
-            const vaultPath = (this.app.vault.adapter as FileSystemAdapter).getBasePath();
-            if (!vaultPath) {
-                return {
-                    success: false,
-                    message: 'Cannot access vault path - check Obsidian permissions'
-                };
-            }
-            const targetFolder = this.getTargetFolderName();
-            const symlinkPath = path.join(vaultPath, targetFolder);
-
-            // Step 1: Check if we have necessary permissions
-            const permissionCheck = await this.checkPermissions(vaultPath, hexoSourcePath);
-            if (!permissionCheck.hasPermission) {
-                return await this.handlePermissionDenied(hexoSourcePath, symlinkPath, permissionCheck.reason || 'Unknown permission error');
-            }
-
-            // Step 2: Clean up existing symlink if invalid
-            await this.cleanupExistingSymlink(symlinkPath, hexoSourcePath);
-
-            // Step 3: Create new symlink
-            const result = await this.createSymlinkSafely(hexoSourcePath, symlinkPath);
-            
-            if (result.success) {
-                new Notice(`✅ Blog link created successfully at ${targetFolder}`);
-                return { success: true, message: 'Symlink created successfully' };
-            } else {
-                return await this.createFallbackReference(hexoSourcePath, symlinkPath);
-            }
-
-        } catch (error) {
-            console.error('Symlink creation error:', error);
-            return {
-                success: false,
-                message: `Failed to create blog link: ${error.message}`
-            };
-        }
-    }
-
-    /**
-     * Check if we have necessary permissions for symlink creation
-     */
-    private async checkPermissions(vaultPath: string, hexoSourcePath: string): Promise<{
-        hasPermission: boolean;
-        reason?: string;
-    }> {
-        try {
-            // Check if source path exists and is readable
-            await fs.access(hexoSourcePath, fs.constants.R_OK);
-            
-            // Check if we can write to vault directory
-            await fs.access(vaultPath, fs.constants.W_OK);
-            
-            // Test permission by creating a temporary file
-            const testFile = path.join(vaultPath, `.permission-test-${Date.now()}`);
-            await fs.writeFile(testFile, 'test');
-            await fs.unlink(testFile);
-            
-            return { hasPermission: true };
-            
-        } catch (error) {
-            let reason = 'Unknown permission error';
-            
-            if (error.code === 'ENOENT') {
-                reason = 'Source path does not exist';
-            } else if (error.code === 'EACCES') {
-                reason = 'Permission denied - please grant file access';
-            } else if (error.code === 'EPERM') {
-                reason = 'Operation not permitted';
-            }
-            
-            return { hasPermission: false, reason };
-        }
-    }
-
-    /**
-     * Handle permission denied scenario with user guidance
-     */
-    private async handlePermissionDenied(
-        hexoSourcePath: string, 
-        symlinkPath: string, 
-        reason: string
-    ): Promise<{success: boolean, message: string, fallback?: boolean}> {
-        
-        // Show user-friendly guidance
-        new Notice(
-            `⚠️ Permission Required\n\n` +
-            `Reason: ${reason}\n\n` +
-            `To fix this:\n` +
-            `1. Go to System Preferences > Security & Privacy\n` +
-            `2. Grant Obsidian "Full Disk Access" or access to your blog folder\n` +
-            `3. Restart Obsidian and try again\n\n` +
-            `Creating fallback reference instead...`,
-            15000
-        );
-
-        // Create fallback reference
-        return await this.createFallbackReference(hexoSourcePath, symlinkPath);
-    }
-
-    /**
-     * Clean up existing symlink if it's invalid
-     */
-    private async cleanupExistingSymlink(symlinkPath: string, expectedTarget: string): Promise<void> {
-        try {
-            const stats = await fs.lstat(symlinkPath);
-            
-            if (stats.isSymbolicLink()) {
-                const currentTarget = await fs.readlink(symlinkPath);
-                
-                // Remove if pointing to wrong location
-                if (path.normalize(currentTarget) !== path.normalize(expectedTarget)) {
-                    await fs.unlink(symlinkPath);
-                    console.log('Removed invalid symlink:', currentTarget);
-                }
-            } else if (stats.isDirectory()) {
-                // Check if it's our fallback directory
-                const configFile = path.join(symlinkPath, '.hexo-config.json');
-                try {
-                    const config = JSON.parse(await fs.readFile(configFile, 'utf8'));
-                    if (config.linkType === 'reference') {
-                        // This is our fallback, remove it to create proper symlink
-                        await fs.rm(symlinkPath, { recursive: true });
-                    }
-                } catch {
-                    // Not our fallback directory, leave it alone
-                }
-            }
-        } catch (error) {
-            // File doesn't exist or other error, continue
-            console.debug('Cleanup error (non-critical):', error.message);
-        }
-    }
-
-    /**
-     * Create symlink with proper error handling
-     */
-    private async createSymlinkSafely(source: string, target: string): Promise<{success: boolean, error?: string}> {
-        try {
-            await fs.symlink(source, target, 'dir');
-            console.log('Symlink created successfully:', target);
-            return { success: true };
-        } catch (error) {
-            console.error('Symlink creation failed:', error);
-            return { success: false, error: error.message };
-        }
-    }
-
-    /**
-     * Create fallback reference when symlink is not possible
-     */
-    private async createFallbackReference(
-        hexoSourcePath: string, 
-        symlinkPath: string
-    ): Promise<{success: boolean, message: string, fallback: boolean}> {
-        try {
-            // Create reference directory
-            await fs.mkdir(symlinkPath, { recursive: true });
-            
-            // Create configuration file
-            const config = {
-                blogPath: hexoSourcePath,
-                linkType: 'reference',
-                created: new Date().toISOString(),
-                platform: os.platform(),
-                reason: 'Symlink not available due to permissions'
-            };
-            
-            const configFile = path.join(symlinkPath, '.hexo-config.json');
-            await fs.writeFile(configFile, JSON.stringify(config, null, 2));
-            
-            // Create readme file for users
-            const readmeContent = [
-                '# Blog Reference',
-                '',
-                'This folder is a reference to your Hexo blog, not a direct symlink.',
-                '',
-                `**Blog Path:** ${hexoSourcePath}`,
-                `**Created:** ${new Date().toLocaleString()}`,
-                '',
-                '## Why not a symlink?',
-                'Obsidian does not have the necessary permissions to create a symlink.',
-                'The plugin will still work, but with some limitations.',
-                '',
-                '## To enable full functionality:',
-                '1. Grant Obsidian "Full Disk Access" in System Preferences',
-                '2. Restart Obsidian',
-                '3. Recreate the blog link'
-            ].join('\n');
-            
-            const readmeFile = path.join(symlinkPath, 'README.md');
-            await fs.writeFile(readmeFile, readmeContent);
-            
-            new Notice(
-                `📁 Created blog reference folder\n\n` +
-                `The plugin will work with reduced functionality.\n` +
-                `Check the README.md in the folder for more info.`,
-                8000
-            );
-            
-            return {
-                success: true,
-                message: 'Fallback reference created successfully',
-                fallback: true
-            };
-            
-        } catch (error) {
-            console.error('Fallback creation failed:', error);
-            return {
-                success: false,
-                message: `Failed to create fallback reference: ${error.message}`,
-                fallback: true
-            };
-        }
-    }
-
-    /**
-     * Get platform-specific target folder name
-     */
     private getTargetFolderName(): string {
-        const platform = os.platform();
-        switch (platform) {
+        switch (platform()) {
             case 'darwin': return 'Mac Blog';
             case 'win32': return 'Win Blog';
             default: return 'Hexo Blog';
         }
     }
 
-    /**
-     * Validate existing symlink or reference
-     */
+    private async linkPath(): Promise<string> {
+        const base = (this.app.vault.adapter as FileSystemAdapter).getBasePath();
+        if (!base || !isAbsolute(base)) throw new Error('Cannot access an absolute vault path');
+        const vault = await fs.realpath(base);
+        if (!(await fs.stat(vault)).isDirectory()) throw new Error('Vault path is not a directory');
+        return join(vault, this.getTargetFolderName());
+    }
+
+    private async sourcePath(source: string, target: string): Promise<string> {
+        if (!source || !isAbsolute(source)) throw new Error('Configure an absolute Hexo blog directory');
+        const canonical = await fs.realpath(source);
+        if (!(await fs.stat(canonical)).isDirectory()) throw new Error('Hexo blog path is not a directory');
+        // A blog that contains the vault would make the new directory link recursive.
+        const vaultRelative = relative(canonical, dirname(target));
+        if (vaultRelative === '' || (!vaultRelative.startsWith(`..${sep}`) && vaultRelative !== '..' && !isAbsolute(vaultRelative))) {
+            throw new Error('The blog directory must not be the vault or contain the vault');
+        }
+        return canonical;
+    }
+
+    /** Resolve relative symlink targets against their containing directory, not process.cwd(). */
+    private async symlinkTarget(target: string): Promise<string> {
+        const destination = resolve(dirname(target), await fs.readlink(target));
+        const canonical = await fs.realpath(destination);
+        if (!(await fs.stat(canonical)).isDirectory()) throw new Error('Blog link is not a directory');
+        return canonical;
+    }
+
+    private async referenceTarget(target: string): Promise<string | null> {
+        const file = join(target, '.hexo-config.json');
+        try {
+            // Never accept metadata supplied through a file symlink.
+            const stats = await fs.lstat(file);
+            if (!stats.isFile() || stats.isSymbolicLink()) return null;
+            const config = JSON.parse(await fs.readFile(file, 'utf8'));
+            if (config.linkType !== 'reference' || typeof config.blogPath !== 'string' || !isAbsolute(config.blogPath)) return null;
+            const canonical = await fs.realpath(config.blogPath);
+            return (await fs.stat(canonical)).isDirectory() ? canonical : null;
+        } catch {
+            return null;
+        }
+    }
+
+    async createSafeSymlink(hexoSourcePath: string): Promise<LinkResult> {
+        try {
+            const target = await this.linkPath();
+            const source = await this.sourcePath(hexoSourcePath, target);
+            // Existing paths are read-only here, including broken/misdirected symlinks and
+            // old fallback directories that may now contain the user's notes.
+            let existing;
+            try {
+                existing = await fs.lstat(target);
+            } catch (error) {
+                if (error.code !== 'ENOENT') throw error;
+            }
+            if (existing) {
+                if (existing.isSymbolicLink()) {
+                    if (await this.symlinkTarget(target) === source) {
+                        return { success: true, message: 'Existing blog link is already correct' };
+                    }
+                } else if (existing.isDirectory() && await this.referenceTarget(target) === source) {
+                    return { success: true, fallback: true, message: 'Existing reference preserved; no files changed' };
+                }
+                return { success: false, message: `Existing path preserved: ${target}. Move or rename it yourself before creating a different link.` };
+            }
+            await fs.access(source, constants.R_OK);
+            try {
+                await fs.symlink(source, target, platform() === 'win32' ? 'junction' : 'dir');
+                new Notice(`Blog link created at ${this.getTargetFolderName()}`);
+                return { success: true, message: 'Symlink created successfully' };
+            } catch (error) {
+                // EEXIST can be a racing creator, not a reason to write through its path.
+                if (!['EPERM', 'EACCES', 'ENOSYS', 'ENOTSUP'].includes(error.code)) throw error;
+                return await this.createFallbackReference(source, target);
+            }
+        } catch (error) {
+            return { success: false, message: `Blog link was not changed: ${error.message}` };
+        }
+    }
+
+    private async createFallbackReference(source: string, target: string): Promise<LinkResult> {
+        try {
+            // Exclusive directory creation: never mkdir-recursive into an existing directory/link.
+            await fs.mkdir(target);
+            const created = await fs.lstat(target);
+            const assertOwnedDirectory = async () => {
+                const current = await fs.lstat(target);
+                if (!current.isDirectory() || current.isSymbolicLink() || current.dev !== created.dev || current.ino !== created.ino) {
+                    throw new Error('Reference path changed while creating it');
+                }
+            };
+            const config = { blogPath: source, linkType: 'reference', created: new Date().toISOString(), platform: platform() };
+            await assertOwnedDirectory();
+            await fs.writeFile(join(target, '.hexo-config.json'), JSON.stringify(config, null, 2), { flag: 'wx' });
+            await assertOwnedDirectory();
+            await fs.writeFile(join(target, 'README.md'), [
+                '# Blog Reference', '',
+                'This is a reference folder, not a synced copy or a symlink.', '',
+                `Blog path: ${source}`, '',
+                'Symlink creation was unavailable. No existing file was replaced.',
+                'To replace this reference with a link, first move this folder somewhere safe yourself.'
+            ].join('\n'), { flag: 'wx' });
+            new Notice('Created a blog reference instead of a symlink. Existing files were not replaced.');
+            return { success: true, fallback: true, message: 'Fallback reference created' };
+        } catch (error) {
+            // A partial reference may contain files or concurrent user edits. Never recursively clean it up.
+            return { success: false, fallback: true, message: `Reference not completed; existing files preserved: ${error.message}` };
+        }
+    }
+
     async validateSymlink(hexoSourcePath: string): Promise<{
         isValid: boolean;
         type: 'symlink' | 'reference' | 'missing';
         needsRecreation: boolean;
     }> {
+        let type: 'symlink' | 'reference' | 'missing' = 'missing';
         try {
-            const vaultPath = (this.app.vault.adapter as FileSystemAdapter).getBasePath();
-            if (!vaultPath) {
-                return {
-                    isValid: false,
-                    type: 'missing',
-                    needsRecreation: true
-                };
-            }
-            const targetFolder = this.getTargetFolderName();
-            const symlinkPath = path.join(vaultPath, targetFolder);
-            
-            const stats = await fs.lstat(symlinkPath);
-            
+            const target = await this.linkPath();
+            const source = await this.sourcePath(hexoSourcePath, target);
+            const stats = await fs.lstat(target);
+            let destination: string | null = null;
             if (stats.isSymbolicLink()) {
-                const currentTarget = await fs.readlink(symlinkPath);
-                const isValid = path.normalize(currentTarget) === path.normalize(hexoSourcePath);
-                
-                return {
-                    isValid,
-                    type: 'symlink',
-                    needsRecreation: !isValid
-                };
+                type = 'symlink';
+                destination = await this.symlinkTarget(target);
             } else if (stats.isDirectory()) {
-                const configFile = path.join(symlinkPath, '.hexo-config.json');
-                try {
-                    const config = JSON.parse(await fs.readFile(configFile, 'utf8'));
-                    const isValid = path.normalize(config.blogPath) === path.normalize(hexoSourcePath);
-                    
-                    return {
-                        isValid,
-                        type: 'reference',
-                        needsRecreation: !isValid
-                    };
-                } catch {
-                    return {
-                        isValid: false,
-                        type: 'reference',
-                        needsRecreation: true
-                    };
-                }
+                type = 'reference';
+                destination = await this.referenceTarget(target);
             }
-            
-        } catch (error) {
-            // Path doesn't exist
-            if (error.code === 'ENOENT') {
-                return {
-                    isValid: false,
-                    type: 'missing',
-                    needsRecreation: true
-                };
-            }
-            throw error;
+            const isValid = destination === source;
+            return { isValid, type, needsRecreation: !isValid };
+        } catch {
+            return { isValid: false, type, needsRecreation: true };
         }
-        
-        return {
-            isValid: false,
-            type: 'missing',
-            needsRecreation: true
-        };
     }
 
-    /**
-     * Get the actual blog path from symlink or reference
-     */
     async getBlogPath(): Promise<string | null> {
         try {
-            const vaultPath = (this.app.vault.adapter as FileSystemAdapter).getBasePath();
-            if (!vaultPath) {
-                console.debug('Cannot access vault path for getBlogPath');
-                return null;
-            }
-            const targetFolder = this.getTargetFolderName();
-            const symlinkPath = path.join(vaultPath, targetFolder);
-            
-            const stats = await fs.lstat(symlinkPath);
-            
-            if (stats.isSymbolicLink()) {
-                return await fs.readlink(symlinkPath);
-            } else if (stats.isDirectory()) {
-                const configFile = path.join(symlinkPath, '.hexo-config.json');
-                const config = JSON.parse(await fs.readFile(configFile, 'utf8'));
-                return config.blogPath;
-            }
-            
-        } catch (error) {
-            console.debug('Could not get blog path:', error.message);
+            const target = await this.linkPath();
+            const stats = await fs.lstat(target);
+            const source = stats.isSymbolicLink() ? await this.symlinkTarget(target)
+                : stats.isDirectory() ? await this.referenceTarget(target) : null;
+            return source ? await this.sourcePath(source, target) : null;
+        } catch {
+            return null;
         }
-        
-        return null;
     }
 }

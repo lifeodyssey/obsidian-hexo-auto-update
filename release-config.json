@@ -1,4 +1,5 @@
 {
   "version": "2.0.1",
-  "channel": "prerelease"
+  "channel": "prerelease",
+  "notes": "release-notes/2.0.1.md"
 }

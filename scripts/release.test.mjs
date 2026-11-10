@@ -1,92 +1,82 @@
 import { test } from 'node:test';
-import assert from 'node:assert/strict';
-import { releasePlan, versionBeforePush, publish } from './release.mjs';
-
+import { strict as assert } from 'node:assert';
+import { readFileSync } from 'node:fs';
+import { releasePlan, publish } from './release.mjs';
 const sha = 'a'.repeat(40);
-const options = { repository: 'owner/repo', version: '2.0.1', channel: 'prerelease', sha,
-    notes: 'notes.md', assets: [{ path: 'dist/main.js', name: 'main.js', size: 2, digest: 'sha256:test' }] };
-function fake(release, refs = `${sha}\trefs/tags/2.0.1`) {
-    const calls = [];
-    const run = (cmd, args) => {
-        calls.push([cmd, ...args]);
-        if (cmd === 'git') return refs;
-        if (args[0] === 'api') {
-            if (release instanceof Error) throw release;
-            return JSON.stringify(release);
+const other = 'b'.repeat(40);
+const options = { repository:'owner/repo', version:'2.0.2', channel:'prerelease', sha, notes:'release-notes/2.0.2.md', assets:[{path:'dist/main.js',name:'main.js',size:2,digest:'sha256:test'}] };
+const draft = {draft:true,prerelease:true,target_commitish:sha,tag_name:options.version,assets:[]};
+const cfg = {version:options.version,channel:'prerelease',notes:options.notes};
+const pkg = {version:options.version};
+const manifest = {...pkg,minAppVersion:'0.15.0'};
+const versions = {[pkg.version]:manifest.minAppVersion};
+const nf = () => Object.assign(new Error('not found'),{stderr:'gh: Not Found (HTTP 404)'});
+function fake(release = draft, refs = `${sha}\trefs/tags/2.0.2`) {
+    const calls=[]; let current=release;
+    const run=(cmd,args)=>{
+        calls.push([cmd,...args]);
+        if(cmd==='git') return typeof refs==='function'?refs(calls):refs;
+        if(args[0]==='api') {
+            if(args[1].includes('/commits/')) return JSON.stringify({sha: current.target_commitish});
+            if(current instanceof Error) throw current;
+            return JSON.stringify(current);
         }
+        if(args[1]==='create') current={...draft,prerelease:args.includes('--prerelease')};
         return '';
     };
-    return { run, calls };
+    return {run,calls};
 }
-const notFound = () => Object.assign(new Error('not found'), { stderr: 'gh: Not Found (HTTP 404)' });
-
-test('version-bump plus follow-up commit compares against the push base, not HEAD^', () => {
-    const before = 'b'.repeat(40);
-    const previous = versionBeforePush(before, (cmd, args) => {
-        assert.deepEqual([cmd, ...args], ['git', 'show', `${before}:package.json`]);
-        return '{"version":"2.0.0"}';
-    });
-    assert.equal(releasePlan({ version: '2.0.1' }, { version: '2.0.1' }, { version: '2.0.1', channel: 'prerelease' }, previous).changed, true);
+test('explicit tag validates version, channel and compatibility',()=>assert.deepEqual(releasePlan(pkg,manifest,cfg,versions,pkg.version),{version:pkg.version,channel:'prerelease'}));
+test('tag intent does not depend on previous push, so later branch pushes cannot erase it',()=>{
+    const workflow=readFileSync(new URL('../.github/workflows/release.yml',import.meta.url),'utf8');
+    assert.match(workflow,/tags: \['\[0-9\]\*'\]/); assert.doesNotMatch(workflow,/branches:|BEFORE_SHA/);
+    assert.match(workflow,/group: release-\$\{\{ github.ref \}\}/);
+    assert.equal(releasePlan(pkg,manifest,cfg,versions,pkg.version).version,pkg.version);
 });
-test('no version bump is a no-op; current follow-up cannot republish 2.0.1', () => {
-    assert.equal(releasePlan({ version: '2.0.1' }, { version: '2.0.1' }, {}, { version: '2.0.1' }).changed, false);
+test('missing or mismatched compatibility fails',()=>{
+    assert.throws(()=>releasePlan(pkg,manifest,cfg,{},pkg.version),/compatibility/);
+    assert.throws(()=>releasePlan(pkg,manifest,cfg,{[pkg.version]:'9.0.0'},pkg.version),/compatibility/);
 });
-test('initial push and invalid/missing base are handled explicitly', () => {
-    assert.equal(versionBeforePush('0'.repeat(40)), null);
-    assert.throws(() => versionBeforePush(undefined), /invalid/);
+test('wrong tag, package, channel, notes or metadata versions fail during plan',()=>{
+    assert.throws(()=>releasePlan(pkg,manifest,cfg,versions,'2.0.3'),/tag/);
+    assert.throws(()=>releasePlan(pkg,{...manifest,version:'1.0.0'},cfg,versions,pkg.version),/differ/);
+    assert.throws(()=>releasePlan(pkg,manifest,{...cfg,channel:'other'},versions,pkg.version),/channel/);
+    assert.throws(()=>releasePlan(pkg,manifest,{...cfg,notes:'SECURITY_DEPENDENCIES.md'},versions,pkg.version),/notes/);
+    assert.throws(()=>releasePlan({version:'2.0.2+build.1'},manifest,cfg,versions,'2.0.2+build.1'),/numeric/);
 });
-test('new versions must explicitly choose their own channel', () => {
-    assert.throws(() => releasePlan({ version: '2.0.2' }, { version: '2.0.2' }, { version: '2.0.1', channel: 'prerelease' }, { version: '2.0.1' }), /explicitly/);
-    assert.equal(releasePlan({ version: '2.0.2' }, { version: '2.0.2' }, { version: '2.0.2', channel: 'stable' }, { version: '2.0.1' }).channel, 'stable');
+test('fresh publication uses a pre-existing verified tag and rereads created draft',()=>{
+    const f=fake(nf()); publish(options,f.run);
+    assert.ok(f.calls.find(c=>c[2]==='create').includes('--verify-tag'));
+    assert.ok(f.calls.find(c=>c[2]==='edit').includes('--draft=false'));
+    assert.equal(f.calls.filter(c=>c[1]==='api'&&c[2].includes('/releases/')).length,3);
 });
-test('fresh release is draft until all assets upload, then published as configured', () => {
-    const f = fake(notFound(), '');
-    publish(options, f.run);
-    const actions = f.calls.filter(c => c[0] === 'gh').map(c => c[2]);
-    assert.deepEqual(actions, ['repos/owner/repo/releases/tags/2.0.1', 'create', 'upload', 'edit']);
-    assert.ok(f.calls.find(c => c[2] === 'create').includes('--draft'));
-    assert.ok(f.calls.find(c => c[2] === 'edit').includes('--prerelease=true'));
+test('matching partial draft resumes',()=>{const f=fake();publish(options,f.run);assert.ok(f.calls.find(c=>c[2]==='upload').includes('--clobber'));});
+test('draft wrong channel is blocked before any asset mutation',()=>{
+    const f=fake({...draft,prerelease:false});assert.throws(()=>publish(options,f.run),/channel/);assert.ok(!f.calls.some(c=>c[2]==='upload'||c[2]==='edit'));
 });
-test('partial draft is resumed without creating another release', () => {
-    const f = fake({ draft: true, assets: [] });
-    publish(options, f.run);
-    assert.ok(!f.calls.some(c => c[2] === 'create'));
-    assert.ok(f.calls.find(c => c[2] === 'upload').includes('--clobber'));
+test('draft wrong target or missing target fails even when tag matches',()=>{
+    for(const target_commitish of [other,undefined]) assert.throws(()=>publish(options,fake({...draft,target_commitish}).run),/target/);
 });
-test('fully published identical release is an idempotent no-op', () => {
-    const f = fake({ draft: false, prerelease: true, assets: options.assets });
-    publish(options, f.run);
-    assert.equal(f.calls.filter(c => c[0] === 'gh').length, 1);
+test('missing or wrong existing tag is blocked, no automatic tag creation',()=>{
+    for(const refs of ['',`${other}\trefs/tags/2.0.2`]) assert.throws(()=>publish(options,fake(draft,refs).run),/tag/);
 });
-test('partial published release uploads only missing assets, never overwrites', () => {
-    const f = fake({ draft: false, prerelease: true, assets: [] });
-    publish(options, f.run);
-    const upload = f.calls.find(c => c[2] === 'upload');
-    assert.ok(upload.includes('dist/main.js'));
-    assert.ok(!upload.includes('--clobber'));
-    assert.ok(!f.calls.some(c => c[2] === 'edit'));
+test('annotated tag peels to correct commit',()=>publish(options,fake(draft,`${other}\trefs/tags/2.0.2\n${sha}\trefs/tags/2.0.2^{}`).run));
+test('tag changed after release lookup is caught before upload',()=>{
+    let n=0;const f=fake(draft,()=>`${++n===1?sha:other}\trefs/tags/2.0.2`);
+    assert.throws(()=>publish(options,f.run),/tag/);assert.ok(!f.calls.some(c=>c[2]==='upload'));
 });
-test('tag collision, channel mismatch and changed published assets fail closed', () => {
-    assert.throws(() => publish(options, fake({}, `${'b'.repeat(40)}\trefs/tags/2.0.1`).run), /different commit/);
-    assert.throws(() => publish(options, fake({ draft: false, prerelease: false, assets: [] }).run), /different channel/);
-    assert.throws(() => publish(options, fake({ draft: false, prerelease: true, assets: [{ name: 'main.js', size: 3 }] }).run), /Published asset differs/);
+test('channel changed during upload is caught before publication',()=>{
+    const f=fake();let uploaded=false;
+    assert.throws(()=>publish(options,(cmd,args)=>{if(args[1]==='upload')uploaded=true;if(uploaded&&args[0]==='api'&&args[1].includes('/releases/'))return JSON.stringify({...draft,prerelease:false});return f.run(cmd,args);}),/channel/);
+    assert.ok(!f.calls.some(c=>c[2]==='edit'));
 });
-test('HTTP 403/network failures do not cause create attempts', () => {
-    const f = fake(Object.assign(new Error('forbidden'), { stderr: 'gh: Forbidden (HTTP 403)' }));
-    assert.throws(() => publish(options, f.run), /forbidden/);
-    assert.ok(!f.calls.some(c => c[2] === 'create'));
+test('published matching release is no-op; does not resolve historical mutable branch',()=>{
+    const f=fake({...draft,draft:false,target_commitish:'main',assets:options.assets});publish(options,f.run);assert.ok(!f.calls.some(c=>c[2]==='upload'||c[2]==='edit'||c[2]?.includes('/commits/')));
 });
-test('stable configuration is supported without modifying any existing release', () => {
-    const f = fake(notFound(), '');
-    publish({ ...options, channel: 'stable' }, f.run);
-    assert.ok(!f.calls.find(c => c[2] === 'create').includes('--prerelease'));
-    assert.ok(f.calls.find(c => c[2] === 'edit').includes('--prerelease=false'));
+test('changed published assets fail; missing assets may be uploaded without clobber',()=>{
+    assert.throws(()=>publish(options,fake({...draft,draft:false,assets:[{name:'main.js',size:3}]}).run),/differs/);
+    const f=fake({...draft,draft:false});publish(options,f.run);assert.ok(!f.calls.find(c=>c[2]==='upload').includes('--clobber'));
 });
-test('failed upload never publishes a draft', () => {
-    const f = fake({ draft: true, assets: [] });
-    assert.throws(() => publish(options, (cmd, args) => {
-        if (args[1] === 'upload') throw new Error('upload failed');
-        return f.run(cmd, args);
-    }), /upload failed/);
-    assert.ok(!f.calls.some(c => c[2] === 'edit'));
-});
+test('network errors are not treated as absent releases',()=>{const f=fake(Object.assign(new Error('403'),{stderr:'HTTP 403'}));assert.throws(()=>publish(options,f.run),/403/);assert.ok(!f.calls.some(c=>c[2]==='create'));});
+test('upload failure never publishes',()=>{const f=fake();assert.throws(()=>publish(options,(cmd,args)=>{if(args[1]==='upload')throw Error('upload failed');return f.run(cmd,args);}),/upload failed/);assert.ok(!f.calls.some(c=>c[2]==='edit'));});
+test('stable intent remains explicit',()=>{const f=fake(nf());publish({...options,channel:'stable'},f.run);assert.ok(!f.calls.find(c=>c[2]==='create').includes('--prerelease'));});
